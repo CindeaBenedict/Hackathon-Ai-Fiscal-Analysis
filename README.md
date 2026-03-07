@@ -30,7 +30,7 @@ If you don't have a GitLab account yet:
 
 1. Go to [gitlab.com](https://gitlab.com) and click **Register**
 2. Fill in your details and verify your email address
-3. Done! Make sure to tell your organiser your GitLab username so you can be added to this repository
+3. Done! You will receive an email invitation to join this repository — click the link in that email to get access
 
 ---
 
@@ -149,7 +149,7 @@ Your pitch deck (PowerPoint or PDF) is submitted **separately** on the Next Leve
 Enter your GitLab email address and password. If that doesn't work, you may need to use a Personal Access Token instead of your password — ask a crew member and they'll set it up for you in 2 minutes.
 
 **"I get an error saying 'Permission denied' or 'Repository not found'"**
-You probably haven't been added to this repository yet. Ask an organiser to add your GitLab username.
+You probably haven't accepted your email invitation yet. Check your inbox for an email from GitLab and click the link to accept it. If you can't find it, ask a crew member.
 
 **"I accidentally deleted or broke something"**
 Don't panic! Git keeps a full history of everything. Ask a crew member and they can restore it.
