@@ -1,7 +1,15 @@
 :root {
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
   color: #0f172a;
-  background: #f8fafc;
+  background: #f1f5f9;
 }
 
 * {
@@ -10,35 +18,86 @@
 
 body {
   margin: 0;
+  background:
+    radial-gradient(circle at 0% 0%, #dbeafe 0, transparent 35%),
+    radial-gradient(circle at 100% 0%, #e2e8f0 0, transparent 30%),
+    #f1f5f9;
 }
 
 .app-shell {
-  max-width: 1100px;
+  max-width: 1160px;
   margin: 0 auto;
   padding: 24px;
   display: grid;
-  gap: 16px;
+  gap: 14px;
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.65rem;
+}
+
+.topbar p {
+  margin: 4px 0 0;
+  color: #64748b;
+}
+
+.nav-tabs {
+  display: inline-flex;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid #dbe2ea;
+  border-radius: 12px;
+  padding: 5px;
+}
+
+.nav-tabs button {
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.nav-tabs .tab-active {
+  background: #0f172a;
+  color: #f8fafc;
 }
 
 .panel {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #dbe2ea;
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
+}
+
+.panel h2 {
+  margin-top: 0;
+  margin-bottom: 10px;
 }
 
 .controls-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 label {
   display: grid;
   gap: 6px;
   font-weight: 600;
-  color: #334155;
+  color: #1e293b;
 }
 
 input,
@@ -49,16 +108,38 @@ button {
 
 input,
 select {
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
+  border: 1px solid #c9d4e2;
+  border-radius: 10px;
   padding: 8px 10px;
+  background: #ffffff;
+}
+
+input:focus,
+select:focus {
+  border-color: #3b82f6;
+  outline: 2px solid rgba(59, 130, 246, 0.15);
+}
+
+.actions-row {
+  display: flex;
+  gap: 10px;
 }
 
 .primary-button {
   border: none;
-  border-radius: 8px;
-  background: #2563eb;
+  border-radius: 10px;
+  background: linear-gradient(120deg, #2563eb, #1d4ed8);
   color: white;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.secondary-button {
+  border: 1px solid #c9d4e2;
+  border-radius: 10px;
+  background: #fff;
+  color: #1e293b;
   padding: 10px 16px;
   cursor: pointer;
   font-weight: 600;
@@ -78,7 +159,8 @@ select {
 .metric-card {
   border: 1px solid #e2e8f0;
   border-radius: 10px;
-  padding: 10px;
+  padding: 12px;
+  background: #fff;
 }
 
 .metric-card p {
@@ -102,8 +184,74 @@ select {
 .chart-card {
   border: 1px solid #e2e8f0;
   border-radius: 10px;
+  padding: 10px 12px;
+  min-height: 230px;
+  max-height: 250px;
+  background: #fff;
+}
+
+.chart-card h3 {
+  margin: 2px 0 8px;
+  font-size: 0.95rem;
+}
+
+.ai-summary p {
+  margin: 0;
+  color: #334155;
+  line-height: 1.45;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.muted {
+  color: #64748b;
+  margin: 0;
+}
+
+.logs-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.log-item {
+  border: 1px solid #dbe2ea;
+  border-radius: 12px;
   padding: 10px;
-  min-height: 340px;
+  background: #fff;
+}
+
+.log-item header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.log-item pre {
+  white-space: pre-wrap;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.log-success {
+  border-left: 4px solid #16a34a;
+}
+
+.log-error {
+  color: #dc2626;
+}
+
+.log-info {
+  border-left: 4px solid #2563eb;
 }
 
 .error {

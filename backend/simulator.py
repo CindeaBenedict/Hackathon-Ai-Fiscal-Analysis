@@ -144,3 +144,68 @@ def run_monte_carlo(
         "inventory_traces": inventory_traces,
         "profits": profits,
     }
+
+
+def _percentile(values: List[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    idx = int(round((len(ordered) - 1) * percentile))
+    idx = max(0, min(idx, len(ordered) - 1))
+    return ordered[idx]
+
+
+def _mean_trace(traces: List[List[float]]) -> List[float]:
+    if not traces:
+        return []
+    width = len(traces[0])
+    means: List[float] = []
+    for i in range(width):
+        means.append(sum(trace[i] for trace in traces) / len(traces))
+    return means
+
+
+def run_monte_carlo_compact(
+    strategy: Strategy,
+    simulations: int = 100,
+    custom_quantity: int | None = None,
+) -> Dict:
+    """
+    Compact version for mobile clients:
+    returns aggregated metrics and summarized traces/histogram only.
+    """
+    full = run_monte_carlo(
+        strategy=strategy,
+        simulations=simulations,
+        custom_quantity=custom_quantity,
+    )
+    profits: List[float] = full["profits"]
+    traces: List[List[float]] = full["inventory_traces"]
+
+    bins_count = 8
+    min_profit = min(profits)
+    max_profit = max(profits)
+    spread = max(max_profit - min_profit, 1.0)
+    bin_size = spread / bins_count
+    bins = [0 for _ in range(bins_count)]
+    for value in profits:
+        index = int((value - min_profit) / bin_size)
+        if index == bins_count:
+            index -= 1
+        bins[index] += 1
+
+    return {
+        "avg_profit": full["avg_profit"],
+        "best_profit": full["best_profit"],
+        "worst_profit": full["worst_profit"],
+        "stockouts_average": full["stockouts_average"],
+        "bankruptcy_probability": full["bankruptcy_probability"],
+        "profit_p10": _percentile(profits, 0.10),
+        "profit_p50": _percentile(profits, 0.50),
+        "profit_p90": _percentile(profits, 0.90),
+        "avg_inventory_trace": _mean_trace(traces),
+        "profit_histogram_bins": bins,
+        "profit_histogram_edges": [
+            min_profit + (i * bin_size) for i in range(bins_count + 1)
+        ],
+    }

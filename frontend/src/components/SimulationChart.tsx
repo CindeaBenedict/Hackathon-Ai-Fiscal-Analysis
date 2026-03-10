@@ -30,8 +30,8 @@ type SimulationChartProps = {
 };
 
 function buildInventoryDatasets(inventoryTraces: number[][]) {
-  // Plot up to 20 traces to keep the chart readable and responsive.
-  const sampled = inventoryTraces.slice(0, 20);
+  // Plot up to 10 traces to keep the chart compact.
+  const sampled = inventoryTraces.slice(0, 10);
   return sampled.map((trace, index) => ({
     label: `Run ${index + 1}`,
     data: trace,
@@ -74,11 +74,25 @@ function SimulationChart({ inventoryTraces, profits }: SimulationChartProps) {
       <div className="chart-grid">
         <div className="chart-card">
           <h3>Inventory Over 12 Weeks</h3>
-          <Line data={inventoryData} options={{ responsive: true, maintainAspectRatio: false }} />
+          <Line
+            data={inventoryData}
+            options={{
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+            }}
+          />
         </div>
         <div className="chart-card">
           <h3>Profit Distribution</h3>
-          <Bar data={profitData} options={{ responsive: true, maintainAspectRatio: false }} />
+          <Bar
+            data={profitData}
+            options={{
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+            }}
+          />
         </div>
       </div>
     </section>

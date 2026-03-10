@@ -4,22 +4,30 @@ type StrategySelectorProps = {
   strategy: Strategy;
   customOrderQuantity: number;
   simulations: number;
+  aiModel: string;
   onStrategyChange: (value: Strategy) => void;
   onCustomOrderQuantityChange: (value: number) => void;
   onSimulationsChange: (value: number) => void;
+  onAiModelChange: (value: string) => void;
   onSimulate: () => void;
+  onRunAiAdvisor: () => void;
   isLoading: boolean;
+  isAiLoading: boolean;
 };
 
 function StrategySelector({
   strategy,
   customOrderQuantity,
   simulations,
+  aiModel,
   onStrategyChange,
   onCustomOrderQuantityChange,
   onSimulationsChange,
+  onAiModelChange,
   onSimulate,
+  onRunAiAdvisor,
   isLoading,
+  isAiLoading,
 }: StrategySelectorProps) {
   return (
     <section className="panel">
@@ -59,11 +67,30 @@ function StrategySelector({
             onChange={(event) => onSimulationsChange(Number(event.target.value))}
           />
         </label>
+
+        <label>
+          AI Model
+          <input
+            type="text"
+            value={aiModel}
+            onChange={(event) => onAiModelChange(event.target.value)}
+            placeholder="llama3.2:1b"
+          />
+        </label>
       </div>
 
-      <button className="primary-button" onClick={onSimulate} disabled={isLoading}>
-        {isLoading ? "Running..." : "Simulate"}
-      </button>
+      <div className="actions-row">
+        <button className="primary-button" onClick={onSimulate} disabled={isLoading}>
+          {isLoading ? "Running..." : "Run Simulation"}
+        </button>
+        <button
+          className="secondary-button"
+          onClick={onRunAiAdvisor}
+          disabled={isAiLoading}
+        >
+          {isAiLoading ? "Thinking..." : "Run AI Advisor"}
+        </button>
+      </div>
     </section>
   );
 }
