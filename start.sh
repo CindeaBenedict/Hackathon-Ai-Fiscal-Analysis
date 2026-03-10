@@ -5,7 +5,6 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-# ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
@@ -16,7 +15,6 @@ fail() { echo -e "${RED}  ✗${RESET}  $*" >&2; }
 step() { echo -e "\n${BOLD}${BLUE}[$1]${RESET} $2"; }
 
 APP_URL="http://localhost:8080"
-MODEL="llama3.2:1b"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo ""
@@ -26,13 +24,12 @@ echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 # ── Step 1: Docker ────────────────────────────────────────────────────────────
-step "1/4" "Checking Docker"
+step "1/3" "Checking Docker"
 
 if ! command -v docker &>/dev/null; then
   fail "Docker is not installed."
   echo ""
-  echo -e "  Install Docker Desktop from: ${BOLD}https://www.docker.com/products/docker-desktop/${RESET}"
-  echo -e "  Then re-run this script."
+  echo -e "  Download Docker Desktop: ${BOLD}https://www.docker.com/products/docker-desktop/${RESET}"
   exit 1
 fi
 
@@ -44,96 +41,60 @@ if ! docker info &>/dev/null 2>&1; then
   echo -n "     Waiting for Docker"
   for i in $(seq 1 30); do
     if docker info &>/dev/null 2>&1; then break; fi
-    echo -n "."
-    sleep 2
+    echo -n "."; sleep 2
   done
   echo ""
   if ! docker info &>/dev/null 2>&1; then
-    fail "Docker did not start in time. Please open Docker Desktop manually and try again."
+    fail "Docker did not start. Please open Docker Desktop manually and try again."
     exit 1
   fi
 fi
 ok "Docker is running"
 
-# ── Step 2: Ollama ────────────────────────────────────────────────────────────
-step "2/4" "Checking Ollama (local AI engine)"
-
-if ! command -v ollama &>/dev/null; then
-  warn "Ollama is not installed — AI features will be disabled."
-  echo ""
-  echo -e "  To enable AI: install from ${BOLD}https://ollama.com${RESET}"
-  echo -e "  Then run: ${BOLD}ollama pull ${MODEL}${RESET}"
-  echo ""
-  OLLAMA_OK=false
-else
-  OLLAMA_OK=true
-fi
-
-if $OLLAMA_OK; then
-  if ! curl -sf http://localhost:11434/api/tags &>/dev/null; then
-    info "Starting Ollama server…"
-    ollama serve &>/dev/null &
-    disown
-    sleep 3
-    if curl -sf http://localhost:11434/api/tags &>/dev/null; then
-      ok "Ollama started"
-    else
-      warn "Ollama did not start — AI features may be unavailable"
-      OLLAMA_OK=false
-    fi
-  else
-    ok "Ollama is running"
-  fi
-fi
-
-if $OLLAMA_OK; then
-  if ! ollama list 2>/dev/null | grep -q "$MODEL"; then
-    info "Downloading AI model ${MODEL} (first time only, ~1 GB)…"
-    echo ""
-    ollama pull "$MODEL"
-    echo ""
-    ok "Model ${MODEL} ready"
-  else
-    ok "Model ${MODEL} already downloaded"
-  fi
-fi
-
-# ── Step 3: Build & Start ─────────────────────────────────────────────────────
-step "3/4" "Starting application (building if needed)"
+# ── Step 2: API keys hint ─────────────────────────────────────────────────────
+step "2/3" "Checking configuration"
 
 cd "$SCRIPT_DIR"
 
-# Bring down any stale containers cleanly
+if [[ -f ".env" ]]; then
+  ok ".env file found — API keys will be loaded"
+else
+  warn "No .env file found — Claude/OpenAI features will be unavailable"
+  echo -e "     Copy ${BOLD}.env.example${RESET} to ${BOLD}.env${RESET} and add your API keys to enable them."
+  echo -e "     The local AI (Ollama + Llama) still works without any keys."
+fi
+
+# ── Step 3: Build & Start ─────────────────────────────────────────────────────
+step "3/3" "Starting all services"
+
+info "Bringing down any stale containers…"
 docker compose down --remove-orphans &>/dev/null || true
 
-info "Building and starting services…"
-if docker compose up --build -d 2>&1; then
-  ok "Services started"
-else
+info "Building images and starting services (Ollama + Backend + Frontend)…"
+info "The AI model (~1 GB) will download automatically in the background on first run."
+echo ""
+
+if ! docker compose up --build -d 2>&1; then
   fail "docker compose failed. Check the output above."
   exit 1
 fi
 
-# ── Step 4: Wait for healthy ──────────────────────────────────────────────────
-step "4/4" "Waiting for app to be ready"
-
-echo -n "     Checking"
+# Wait for ready
+echo -n "     Waiting for app to be ready"
 READY=false
-for i in $(seq 1 30); do
+for i in $(seq 1 40); do
   if curl -sf "http://localhost:8000/health" &>/dev/null && \
      curl -sf "http://localhost:8080" &>/dev/null; then
-    READY=true
-    break
+    READY=true; break
   fi
-  echo -n "."
-  sleep 2
+  echo -n "."; sleep 2
 done
 echo ""
 
 if $READY; then
   ok "Application is ready!"
 else
-  warn "Services may still be starting — try opening the app in a few seconds"
+  warn "Services may still be initialising — try opening the app in a few seconds"
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
@@ -144,15 +105,15 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo ""
 echo -e "  ${BOLD}Dashboard${RESET}  →  ${APP_URL}"
 echo -e "  ${BOLD}API docs${RESET}   →  http://localhost:8000/docs"
-if $OLLAMA_OK; then
-  echo -e "  ${BOLD}AI model${RESET}   →  ${MODEL} (running locally)"
-fi
+echo -e "  ${BOLD}AI status${RESET}  →  http://localhost:8000/ai/status"
+echo ""
+echo -e "  ${YELLOW}Note:${RESET} The AI model downloads in the background on first run."
+echo -e "  Check progress: ${BOLD}docker compose logs ollama${RESET}"
 echo ""
 echo -e "  To stop:   ${BOLD}./stop.sh${RESET}"
 echo -e "  To logs:   ${BOLD}docker compose logs -f${RESET}"
 echo ""
 
-# Open browser (macOS)
 if [[ "$OSTYPE" == "darwin"* ]]; then
   open "$APP_URL" 2>/dev/null || true
 fi

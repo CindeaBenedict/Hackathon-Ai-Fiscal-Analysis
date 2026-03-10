@@ -1,4 +1,43 @@
+import { useEffect, useState } from "react";
+
 export type Strategy = "conservative" | "balanced" | "aggressive" | "custom";
+
+// ── Model presets ─────────────────────────────────────────────────────────────
+
+type ModelPreset = {
+  label: string;
+  model: string;
+  provider: "ollama" | "claude" | "openai";
+  note: string;
+};
+
+const MODEL_PRESETS: ModelPreset[] = [
+  { provider: "ollama", model: "llama3.2:1b",               label: "Llama 3.2 1B",     note: "Fast · local · default" },
+  { provider: "ollama", model: "llama3",                    label: "Llama 3 8B",       note: "Better quality · local" },
+  { provider: "ollama", model: "mistral",                   label: "Mistral 7B",       note: "Good reasoning · local" },
+  { provider: "claude", model: "claude-3-haiku-20240307",   label: "Claude Haiku",     note: "Fast · API key needed" },
+  { provider: "claude", model: "claude-3-5-sonnet-20241022",label: "Claude Sonnet 3.5",note: "Best quality · API key" },
+  { provider: "openai", model: "gpt-4o-mini",               label: "GPT-4o Mini",      note: "Fast · API key needed" },
+  { provider: "openai", model: "gpt-4o",                    label: "GPT-4o",           note: "Best quality · API key" },
+];
+
+const PROVIDER_COLORS = {
+  ollama: { border: "rgba(59,130,246,0.35)", active: "#3b82f6", bg: "rgba(59,130,246,0.10)" },
+  claude: { border: "rgba(168,85,247,0.35)", active: "#a855f7", bg: "rgba(168,85,247,0.10)" },
+  openai: { border: "rgba(16,185,129,0.35)", active: "#10b981", bg: "rgba(16,185,129,0.10)" },
+};
+
+const PROVIDER_LABELS = { ollama: "🏠 Local (Ollama)", claude: "✦ Anthropic Claude", openai: "⬡ OpenAI" };
+
+// ── Provider status types ─────────────────────────────────────────────────────
+
+type ProviderStatus = {
+  ollama: { available: boolean; models: string[]; pulling?: string[] };
+  claude: { available: boolean; models: string[] };
+  openai: { available: boolean; models: string[] };
+};
+
+// ── Props ─────────────────────────────────────────────────────────────────────
 
 type StrategySelectorProps = {
   strategy: Strategy;
@@ -23,6 +62,8 @@ type StrategySelectorProps = {
   isLoading: boolean;
 };
 
+// ── Component ─────────────────────────────────────────────────────────────────
+
 function StrategySelector({
   strategy,
   customOrderQuantity,
@@ -45,17 +86,40 @@ function StrategySelector({
   onSimulate,
   isLoading,
 }: StrategySelectorProps) {
-  const orderQty = strategy === "conservative" ? 150 : strategy === "balanced" ? 120 : strategy === "aggressive" ? 100 : customOrderQuantity;
-  const grossMargin = salePrice - 10; // order_cost is $10
-  const weeklyGross = 100 * grossMargin; // baseline demand 100
-  const weeklyNet = weeklyGross - weeklyFixedCost;
+  const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
+  const [customModel, setCustomModel] = useState("");
+
+  const orderQty = strategy === "conservative" ? 150
+    : strategy === "balanced" ? 120
+    : strategy === "aggressive" ? 100
+    : customOrderQuantity;
+  const grossMargin = salePrice - 10;
+  const weeklyNet = 100 * grossMargin - weeklyFixedCost;
   const marginHealthy = weeklyNet > 0;
+
+  // Poll provider status once on mount
+  useEffect(() => {
+    fetch("/api/ai/status")
+      .then((r) => r.json())
+      .then((data: ProviderStatus) => setProviderStatus(data))
+      .catch(() => null);
+  }, []);
+
+  const activePreset = MODEL_PRESETS.find((p) => p.model === aiModel);
+  const activeProvider = activePreset?.provider ?? "ollama";
+
+  const groups = (["ollama", "claude", "openai"] as const).map((prov) => ({
+    prov,
+    presets: MODEL_PRESETS.filter((p) => p.provider === prov),
+  }));
+
   return (
     <section className="panel">
+      {/* ── Header with margin indicator ─────────────────────────────── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Simulation Controls</h2>
         <span style={{
-          fontSize: "0.75rem", fontWeight: 600, padding: "4px 10px",
+          fontSize: "0.73rem", fontWeight: 600, padding: "4px 10px",
           borderRadius: 999,
           background: marginHealthy ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
           border: `1px solid ${marginHealthy ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
@@ -64,105 +128,191 @@ function StrategySelector({
           Weekly margin: ${weeklyNet.toLocaleString()}/wk {marginHealthy ? "✓ viable" : "⚠ unprofitable"}
         </span>
       </div>
+
+      {/* ── Simulation parameters ─────────────────────────────────────── */}
       <div className="controls-grid">
         <label>
           Strategy
-          <select
-            value={strategy}
-            onChange={(event) => onStrategyChange(event.target.value as Strategy)}
-          >
+          <select value={strategy} onChange={(e) => onStrategyChange(e.target.value as Strategy)}>
             <option value="conservative">Conservative (150 units)</option>
             <option value="balanced">Balanced (120 units)</option>
             <option value="aggressive">Aggressive (100 units)</option>
             <option value="custom">Custom</option>
           </select>
         </label>
-
         <label>
-          Custom Order Quantity
-          <input
-            type="number"
-            min={0}
-            value={customOrderQuantity}
-            onChange={(event) => onCustomOrderQuantityChange(Number(event.target.value))}
-            disabled={strategy !== "custom"}
-          />
+          Custom Order Qty
+          <input type="number" min={0} value={customOrderQuantity}
+            onChange={(e) => onCustomOrderQuantityChange(Number(e.target.value))}
+            disabled={strategy !== "custom"} />
         </label>
-
         <label>
           Simulations
-          <input
-            type="number"
-            min={1}
-            max={2000}
-            value={simulations}
-            onChange={(event) => onSimulationsChange(Number(event.target.value))}
-          />
-        </label>
-
-        <label>
-          AI Model
-          <input
-            type="text"
-            value={aiModel}
-            onChange={(event) => onAiModelChange(event.target.value)}
-            placeholder="llama3.2:1b"
-          />
+          <input type="number" min={1} max={2000} value={simulations}
+            onChange={(e) => onSimulationsChange(Number(e.target.value))} />
         </label>
         <label>
-          Initial Cash
-          <input
-            type="number"
-            min={0}
-            value={initialCash}
-            onChange={(event) => onInitialCashChange(Number(event.target.value))}
-          />
+          Initial Cash ($)
+          <input type="number" min={0} value={initialCash}
+            onChange={(e) => onInitialCashChange(Number(e.target.value))} />
         </label>
         <label>
           Demand Std Dev
-          <input
-            type="number"
-            min={0}
-            value={demandStdDev}
-            onChange={(event) => onDemandStdDevChange(Number(event.target.value))}
-          />
+          <input type="number" min={0} value={demandStdDev}
+            onChange={(e) => onDemandStdDevChange(Number(e.target.value))} />
         </label>
         <label>
           Bankruptcy Threshold
-          <input
-            type="number"
-            value={bankruptcyThreshold}
-            onChange={(event) => onBankruptcyThresholdChange(Number(event.target.value))}
-          />
+          <input type="number" value={bankruptcyThreshold}
+            onChange={(e) => onBankruptcyThresholdChange(Number(e.target.value))} />
         </label>
         <label>
           Weekly Fixed Cost ($)
-          <input
-            type="number"
-            min={0}
-            value={weeklyFixedCost}
-            onChange={(event) => onWeeklyFixedCostChange(Number(event.target.value))}
-          />
+          <input type="number" min={0} value={weeklyFixedCost}
+            onChange={(e) => onWeeklyFixedCostChange(Number(e.target.value))} />
         </label>
         <label>
           Sale Price ($/unit)
-          <input
-            type="number"
-            min={1}
-            value={salePrice}
-            onChange={(event) => onSalePriceChange(Number(event.target.value))}
-          />
+          <input type="number" min={1} value={salePrice}
+            onChange={(e) => onSalePriceChange(Number(e.target.value))} />
         </label>
       </div>
-      <p style={{ fontSize: "0.75rem", color: "var(--text-2)", marginBottom: 12 }}>
-        Order cost: $10/unit fixed · Gross margin: ${grossMargin}/unit · {orderQty} units ordered/week
+
+      <p style={{ fontSize: "0.73rem", color: "var(--text-2)", marginBottom: 16 }}>
+        Order cost: $10/unit · Gross margin: ${grossMargin}/unit · {orderQty} units ordered/week
       </p>
 
+      {/* ── AI Model picker ───────────────────────────────────────────── */}
+      <div style={{
+        background: "var(--s1)", border: "1px solid var(--border)",
+        borderRadius: "var(--r-md)", padding: "12px 14px", marginBottom: 14,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <span style={{ fontSize: "0.70rem", fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.07em", color: "var(--text-2)" }}>
+            AI Model
+          </span>
+          {activePreset && (
+            <span style={{
+              fontSize: "0.68rem", padding: "2px 8px", borderRadius: 999,
+              background: PROVIDER_COLORS[activeProvider].bg,
+              border: `1px solid ${PROVIDER_COLORS[activeProvider].border}`,
+              color: PROVIDER_COLORS[activeProvider].active,
+            }}>
+              {activePreset.label} · {activePreset.note}
+            </span>
+          )}
+        </div>
+
+        {groups.map(({ prov, presets }) => {
+          const status = providerStatus?.[prov];
+          const isAvailable = status?.available ?? (prov === "ollama");
+          const isPulling = prov === "ollama" && (providerStatus?.ollama?.pulling?.length ?? 0) > 0;
+
+          return (
+            <div key={prov} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                <span style={{ fontSize: "0.68rem", color: "var(--text-2)", fontWeight: 600 }}>
+                  {PROVIDER_LABELS[prov]}
+                </span>
+                {prov !== "ollama" && !isAvailable && (
+                  <span style={{ fontSize: "0.62rem", color: "#f59e0b",
+                    background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.25)",
+                    borderRadius: 999, padding: "1px 7px" }}>
+                    API key not set — see .env
+                  </span>
+                )}
+                {prov === "ollama" && isPulling && (
+                  <span style={{ fontSize: "0.62rem", color: "#60a5fa",
+                    background: "rgba(59,130,246,0.10)", border: "1px solid rgba(59,130,246,0.25)",
+                    borderRadius: 999, padding: "1px 7px" }}>
+                    ⟳ downloading model…
+                  </span>
+                )}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {presets.map((p) => {
+                  const active = aiModel === p.model;
+                  const colors = PROVIDER_COLORS[p.provider];
+                  const ollamaDownloaded = prov === "ollama"
+                    ? (providerStatus?.ollama.models ?? []).some(
+                        (m) => m === p.model || m.startsWith(p.model.split(":")[0])
+                      )
+                    : true;
+
+                  return (
+                    <button
+                      key={p.model}
+                      onClick={() => onAiModelChange(p.model)}
+                      title={p.model}
+                      style={{
+                        border: `1px solid ${active ? colors.active : colors.border}`,
+                        borderRadius: "var(--r-xs)",
+                        background: active ? colors.bg : "transparent",
+                        color: active ? colors.active : "var(--text-2)",
+                        fontSize: "0.77rem",
+                        fontWeight: active ? 700 : 500,
+                        padding: "5px 11px",
+                        cursor: "pointer",
+                        transition: "all 0.15s",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                      }}
+                    >
+                      {p.label}
+                      {prov === "ollama" && ollamaDownloaded && (
+                        <span style={{ fontSize: "0.60rem", color: "#22c55e" }}>●</span>
+                      )}
+                      {prov === "ollama" && !ollamaDownloaded && providerStatus && (
+                        <span style={{ fontSize: "0.60rem", color: "var(--text-3)" }}>○</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Custom model input */}
+        <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+          <input
+            placeholder="Custom model name…"
+            value={customModel}
+            onChange={(e) => setCustomModel(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && customModel.trim()) {
+                onAiModelChange(customModel.trim());
+                setCustomModel("");
+              }
+            }}
+            style={{ flex: 1, fontSize: "0.80rem" }}
+          />
+          <button
+            className="secondary-button"
+            style={{ fontSize: "0.78rem", padding: "6px 12px" }}
+            onClick={() => {
+              if (customModel.trim()) {
+                onAiModelChange(customModel.trim());
+                setCustomModel("");
+              }
+            }}
+          >
+            Use
+          </button>
+        </div>
+        <p style={{ margin: "6px 0 0", fontSize: "0.68rem", color: "var(--text-3)" }}>
+          ● = already downloaded · ○ = will auto-download on first use
+        </p>
+      </div>
+
+      {/* ── Run button ────────────────────────────────────────────────── */}
       <div className="actions-row">
         <button className="primary-button" onClick={onSimulate} disabled={isLoading}>
           {isLoading ? "Running…" : "Run Simulation"}
         </button>
-        <span style={{ fontSize: "0.75rem", color: "var(--text-2)" }}>
+        <span style={{ fontSize: "0.73rem", color: "var(--text-2)" }}>
           AI advisor starts automatically after simulation
         </span>
       </div>

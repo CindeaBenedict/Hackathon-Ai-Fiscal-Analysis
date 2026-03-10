@@ -1,6 +1,8 @@
 from datetime import datetime
 from dataclasses import replace
 import math
+import os
+import threading
 import time
 from statistics import NormalDist, pstdev
 import uuid
@@ -8,7 +10,7 @@ import uuid
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from ai_agent import OllamaUnavailableError, extract_first_int, generate_text
+from ai_agent import OllamaUnavailableError, extract_first_int, generate_text, provider_status, pull_model
 from auth import init_auth_db, login_user, register_user, validate_token
 from data_ingest import (
     parse_csv_bytes,
@@ -63,9 +65,27 @@ app.add_middleware(
 )
 
 
+def _auto_pull_model() -> None:
+    """Pull the default Ollama model in the background on startup."""
+    model = os.getenv("DEFAULT_MODEL", "llama3.2:1b")
+    # Wait a few seconds for Ollama container to fully start
+    time.sleep(8)
+    try:
+        status = provider_status()
+        existing = status["ollama"]["models"]
+        # Check if model (or its base name) is already present
+        base = model.split(":")[0]
+        if any(m == model or m.startswith(base) for m in existing):
+            return  # already downloaded
+        pull_model(model)
+    except Exception:
+        pass  # Non-fatal: user will see "model not found" in AI calls
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     init_auth_db()
+    threading.Thread(target=_auto_pull_model, daemon=True).start()
 
 
 @app.get("/health")
@@ -75,18 +95,8 @@ def health_check() -> dict:
 
 @app.get("/ai/status")
 def ai_status() -> dict:
-    """Check if Ollama is reachable and list available models."""
-    import urllib.request, json as _json
-    try:
-        with urllib.request.urlopen(
-            f"{__import__('os').getenv('OLLAMA_BASE_URL', 'http://localhost:11434')}/api/tags",
-            timeout=4,
-        ) as r:
-            data = _json.loads(r.read())
-        models = [m["name"] for m in data.get("models", [])]
-        return {"ollama": "online", "models": models}
-    except Exception as exc:
-        return {"ollama": "offline", "error": str(exc), "models": []}
+    """Return availability and model lists for every AI provider."""
+    return provider_status()
 
 
 def require_auth(authorization: str | None = Header(default=None)) -> str:

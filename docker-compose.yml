@@ -1,11 +1,41 @@
 services:
+
+  # ── Ollama — local LLM runtime ──────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: supplychain-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama   # persists downloaded models across restarts
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # ── FastAPI backend ─────────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
     container_name: supplychain-backend
+    depends_on:
+      ollama:
+        condition: service_healthy
     environment:
-      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # Ollama runs as a sibling container — use service name as hostname
+      OLLAMA_BASE_URL: http://ollama:11434
       AUTH_DB_PATH: /app/data/auth.db
+      # ── AI provider API keys (optional) ────────────────────────────────────
+      # Set these to enable Claude / OpenAI models.
+      # You can also create a .env file in this directory and Docker will pick it up.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Default model to pull on startup
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-llama3.2:1b}
     ports:
       - "8000:8000"
     volumes:
@@ -16,6 +46,7 @@ services:
       timeout: 3s
       retries: 5
 
+  # ── Nginx + React frontend ──────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -26,6 +57,7 @@ services:
     ports:
       - "8080:80"
 
+  # ── Puppeteer smoke tests (run with: docker compose --profile qa up) ────────
   puppeteer-smoke:
     build:
       context: ./qa/puppeteer
@@ -37,4 +69,8 @@ services:
         condition: service_started
     environment:
       TARGET_URL: http://frontend
+      BACKEND_URL: http://backend:8000
     profiles: ["qa"]
+
+volumes:
+  ollama_data:   # named volume so models survive container rebuilds
