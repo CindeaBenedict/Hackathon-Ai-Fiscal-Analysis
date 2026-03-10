@@ -5,6 +5,8 @@ COPY package.json package-lock.json* ./
 RUN npm install
 
 COPY . .
+# In Docker, nginx proxies /api → backend. Do NOT set VITE_API_BASE_URL here.
+# The .env.development file (used only by `npm run dev`) is ignored during build.
 RUN npm run build
 
 FROM nginx:1.27-alpine

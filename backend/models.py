@@ -18,15 +18,43 @@ class SimulationRequest(BaseModel):
         ge=0,
         description="Only used when strategy=custom.",
     )
-    simulations: int = Field(default=100, ge=1, le=5000)
+    simulations: int = Field(default=500, ge=1, le=5000)
+    initial_inventory: float = Field(default=150, ge=0)
+    initial_cash: float = Field(default=5000, ge=0)
+    baseline_demand: float = Field(default=100, ge=0)
+    demand_std_dev: float = Field(default=25, ge=0)
+    lead_time_weeks: int = Field(default=1, ge=0, le=8)
+    holding_cost: float = Field(default=2, ge=0)
+    stockout_penalty: float = Field(default=25, ge=0)
+    order_cost: float = Field(default=10, ge=0)
+    sale_price: float = Field(default=50, ge=0)
+    weekly_fixed_cost: float = Field(default=3200, ge=0)
+    bankruptcy_cash_threshold: float = Field(default=500)
+    supplier_delay_probability: float = Field(default=0.10, ge=0, le=1)
+    demand_spike_probability: float = Field(default=0.05, ge=0, le=1)
+    demand_drop_probability: float = Field(default=0.05, ge=0, le=1)
+    production_loss_probability: float = Field(default=0.02, ge=0, le=1)
+    demand_spike_multiplier: float = Field(default=1.5, ge=1)
+    demand_drop_multiplier: float = Field(default=0.5, ge=0, le=1)
+    production_loss_fraction: float = Field(default=0.2, ge=0, le=1)
 
 
 class SimulationResponse(BaseModel):
     avg_profit: float
     best_profit: float
     worst_profit: float
+    profit_std_dev: Optional[float] = None
+    profit_p05: Optional[float] = None   # VaR 95%
+    profit_p10: Optional[float] = None
+    profit_p50: Optional[float] = None
+    profit_p90: Optional[float] = None
+    profit_p95: Optional[float] = None
     stockouts_average: float
     bankruptcy_probability: float
+    bankruptcy_count: int
+    actual_simulations: Optional[int] = None
+    profit_ci_half_width: Optional[float] = None
+    bankruptcy_ci_half_width: Optional[float] = None
     inventory_traces: List[List[float]]
     profits: List[float]
 
@@ -37,6 +65,7 @@ class CompactSimulationResponse(BaseModel):
     worst_profit: float
     stockouts_average: float
     bankruptcy_probability: float
+    bankruptcy_count: int
     profit_p10: float
     profit_p50: float
     profit_p90: float
@@ -66,3 +95,130 @@ class AIAdvisorResponse(BaseModel):
     model: str
     summary: str
     compact_metrics: CompactSimulationResponse
+
+
+class AILogEntry(BaseModel):
+    timestamp: str
+    action: str
+    model: str
+    prompt: str
+    response: Optional[str] = None
+    error: Optional[str] = None
+    duration_ms: Optional[float] = None
+    prompt_chars: Optional[int] = None
+    response_chars: Optional[int] = None
+
+
+class DataFileSummary(BaseModel):
+    id: str
+    name: str
+    file_type: str
+    rows: int
+    columns: List[str]
+    sample_rows: List[dict]
+    uploaded_at: str
+
+
+class DataChatRequest(BaseModel):
+    message: str = Field(min_length=1)
+    model: str = Field(default="llama3.2:1b")
+
+
+class DataChatResponse(BaseModel):
+    model: str
+    answer: str
+
+
+class SimChatMessage(BaseModel):
+    role: str   # "user" | "assistant"
+    content: str
+
+
+class SimChatRequest(BaseModel):
+    message: str = Field(min_length=1)
+    model: str = Field(default="llama3.2:1b")
+    history: List[SimChatMessage] = Field(default_factory=list)
+    # Simulation context — all optional so the endpoint can be called without results
+    strategy: Optional[str] = None
+    simulations: Optional[int] = None
+    avg_profit: Optional[float] = None
+    worst_profit: Optional[float] = None
+    best_profit: Optional[float] = None
+    profit_std_dev: Optional[float] = None
+    profit_p10: Optional[float] = None
+    profit_p50: Optional[float] = None
+    profit_p90: Optional[float] = None
+    profit_p05: Optional[float] = None
+    stockouts_average: Optional[float] = None
+    bankruptcy_probability: Optional[float] = None
+    bankruptcy_count: Optional[int] = None
+    actual_simulations: Optional[int] = None
+    # Economics context
+    sale_price: Optional[float] = None
+    weekly_fixed_cost: Optional[float] = None
+    order_cost: Optional[float] = None
+    initial_cash: Optional[float] = None
+    bankruptcy_cash_threshold: Optional[float] = None
+
+
+class SimChatResponse(BaseModel):
+    model: str
+    answer: str
+
+
+class AuthRegisterRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=8, max_length=256)
+
+
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AuthResponse(BaseModel):
+    token: str
+    username: str
+
+
+class ProcessFileRequest(BaseModel):
+    model: str = Field(default="llama3.2:1b")
+
+
+class ProcessFileResponse(BaseModel):
+    file_id: str
+    inferred_mapping: dict
+    processed_row_count: int
+    processed_sample_rows: List[dict]
+    ai_notes: Optional[str] = None
+
+
+class FactorImpact(BaseModel):
+    factor: str
+    baseline_avg_profit: float
+    stressed_avg_profit: float
+    delta_avg_profit: float
+    baseline_bankruptcy_probability: float
+    stressed_bankruptcy_probability: float
+    delta_bankruptcy_probability: float
+    explanation: str
+
+
+class TheoryReportRequest(SimulationRequest):
+    confidence_level: float = Field(default=0.95, gt=0.5, lt=0.999)
+    target_margin_of_error: float = Field(default=1000, gt=0)
+    model: Optional[str] = Field(default=None)
+
+
+class TheoryReportResponse(BaseModel):
+    expected_profit: float
+    profit_std_dev: float
+    confidence_interval_low: float
+    confidence_interval_high: float
+    bankruptcy_probability: float
+    bankruptcy_confidence_interval_low: float
+    bankruptcy_confidence_interval_high: float
+    required_simulations_for_target_error: int
+    mathematical_notes: List[str]
+    factor_impacts: List[FactorImpact]
+    ai_explanation: Optional[str] = None

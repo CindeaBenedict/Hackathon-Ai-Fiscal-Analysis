@@ -1,243 +1,83 @@
-# Brewery Supply Chain Uncertainty Simulator
+# Supply Chain Command Center
 
-A mobile-first prototype that demonstrates how uncertainty impacts supply chain decisions using Monte Carlo simulation over a 12-week planning horizon.
+Monte Carlo supply chain simulation with AI advisor.
 
-## Tech Stack
+---
 
-- Backend: Python + FastAPI
-- Mobile app: Flutter
-- Charts: `fl_chart`
+## Quick Start
 
-## Project Structure
+### 1 — Install prerequisites (once)
 
-```text
-backend/
-  main.py
-  simulator.py
-  models.py
-  requirements.txt
+| Tool | What it does | Download |
+|---|---|---|
+| **Docker Desktop** | Runs the app in containers | https://www.docker.com/products/docker-desktop |
+| **Ollama** | Runs the AI locally (free) | https://ollama.com |
 
-frontend/
-  index.html
-  package.json
-  tsconfig*.json
-  vite.config.ts
-  src/
-    App.tsx
-    main.tsx
-    styles.css
-    components/
-      StrategySelector.tsx
-      ResultsDashboard.tsx
-      SimulationChart.tsx
+Both are free, one-click installers.
 
-flutter_app/
-  pubspec.yaml
-  lib/
-    main.dart
-```
-
-## Run Backend
+### 2 — Start the app
 
 ```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+./start.sh
 ```
 
-Backend will run on `http://127.0.0.1:8000`.
+That's it. The script will:
+- Start Docker if it's not running
+- Start Ollama and download the AI model (first time only, ~1 GB)
+- Build and launch the app
+- Open your browser at **http://localhost:8080**
 
-## Run Flutter App
+### 3 — Stop the app
 
 ```bash
-cd flutter_app
-flutter pub get
-flutter run
+./stop.sh
 ```
 
-Notes:
-- For Android emulator use backend URL `http://10.0.2.2:8000`
-- For iOS simulator use backend URL `http://127.0.0.1:8000`
-- For a physical phone use your laptop local network IP (example: `http://192.168.1.23:8000`)
+---
 
-## Run With Docker (cool stack)
+## What the app does
 
-Build and run backend + web dashboard:
+| Feature | Description |
+|---|---|
+| **Monte Carlo Simulation** | Runs hundreds of supply chain scenarios in seconds |
+| **Math Analysis** (blue panel) | Pure statistics: average, P10/P50/P90, VaR, bankruptcy rate |
+| **AI Advisor** (green panel) | Explains the results in plain language, answers your questions |
+| **Data Upload** | Upload CSV / JSON / Excel files for AI analysis |
+| **AI Logs** | See every prompt and response the AI made |
+
+---
+
+## Troubleshooting
+
+**App doesn't start**
+→ Make sure Docker Desktop is running (look for the whale icon in your menu bar)
+
+**AI says "Could not reach Ollama"**
+→ Run `ollama serve` in a terminal, or restart your computer
+
+**Port already in use**
+→ Run `./stop.sh` first, then `./start.sh` again
+
+**Want to reset everything**
+→ Run `./stop.sh && ./start.sh`
+
+---
+
+## For developers
 
 ```bash
-docker compose up --build
+# Start with live reloading (no Docker)
+cd backend && source .venv/bin/activate && uvicorn main:app --reload --port 8000
+cd frontend && npm run dev
+
+# Rebuild Docker images
+make build
+
+# Run smoke tests
+make qa
+
+# View logs
+make logs
 ```
 
-Services:
-- Backend API: `http://localhost:8000`
-- Frontend dashboard: `http://localhost:8080`
-
-Run Puppeteer smoke test:
-
-```bash
-docker compose --profile qa up --build puppeteer-smoke
-```
-
-## Kubernetes (local cluster ready)
-
-Build images and load them into your cluster (for example with `kind`/`minikube`), then apply:
-
-```bash
-kubectl apply -f k8s/backend.yaml
-kubectl apply -f k8s/frontend.yaml
-kubectl apply -f k8s/ingress.yaml
-```
-
-Optional browser smoke job in-cluster:
-
-```bash
-kubectl apply -f k8s/puppeteer-job.yaml
-kubectl logs job/supplychain-puppeteer-smoke
-```
-
-## API
-
-### `POST /simulate`
-
-Request body:
-
-```json
-{
-  "strategy": "balanced",
-  "order_quantity": 120,
-  "simulations": 100
-}
-```
-
-### `POST /ai/order-advice`
-
-Uses a local Ollama model to recommend next week's order quantity.
-
-Request:
-
-```json
-{
-  "inventory": 80,
-  "demand_trend": "rising",
-  "cash": 60000,
-  "model": "llama3"
-}
-```
-
-Response:
-
-```json
-{
-  "recommended_order_units": 132,
-  "model": "llama3",
-  "raw_response": "132"
-}
-```
-
-### `POST /ai/advisor`
-
-Runs simulation + asks local model for a concise risk explanation based on real metrics.
-
-Request:
-
-```json
-{
-  "strategy": "balanced",
-  "order_quantity": 120,
-  "simulations": 100,
-  "model": "llama3"
-}
-```
-
-### `POST /simulate/compact`
-
-Compact response designed for mobile clients (smaller payload):
-
-```json
-{
-  "avg_profit": 12345.6,
-  "best_profit": 20000.0,
-  "worst_profit": -10000.0,
-  "stockouts_average": 1.4,
-  "bankruptcy_probability": 0.0,
-  "profit_p10": 5000.0,
-  "profit_p50": 12000.0,
-  "profit_p90": 18000.0,
-  "avg_inventory_trace": [150, 120, 110, 130],
-  "profit_histogram_bins": [3, 8, 19, 26, 18, 13, 8, 5],
-  "profit_histogram_edges": [-5000, -2500, 0, 2500, 5000, 7500, 10000, 12500, 15000]
-}
-```
-
-## Free Local AI (Ollama)
-
-Install and run Ollama:
-
-```bash
-brew install ollama
-ollama serve
-ollama run llama3
-```
-
-Local model API:
-- `http://localhost:11434/api/generate`
-
-Optional env var for backend:
-
-```bash
-export OLLAMA_BASE_URL=http://localhost:11434
-```
-
-Example AI call:
-
-```bash
-curl -X POST http://127.0.0.1:8000/ai/order-advice \
-  -H "Content-Type: application/json" \
-  -d '{"inventory":80,"demand_trend":"rising","cash":60000,"model":"llama3"}'
-```
-
-Response body:
-
-```json
-{
-  "avg_profit": 12345.6,
-  "best_profit": 20000.0,
-  "worst_profit": -10000.0,
-  "stockouts_average": 1.4,
-  "bankruptcy_probability": 0.0,
-  "inventory_traces": [[150, 60, 80, 40]],
-  "profits": [10000, 12000, -3000]
-}
-```
-
-## Implemented Simulation Behavior
-
-- 12-week simulation horizon
-- State variables:
-  - `inventory`
-  - `cash`
-  - `orders_in_transit`
-  - `weekly_demand_history`
-- Initial values:
-  - `inventory = 150`
-  - `cash = 100000`
-- Demand baseline:
-  - normal distribution around 100 units/week
-- Costs:
-  - `holding_cost = 2`
-  - `stockout_penalty = 20`
-  - `order_cost = 10`
-- Disruptions:
-  - 10% supplier delay (`+1` week lead time)
-  - 5% demand spike (`x1.5`)
-  - 5% demand drop (`x0.5`)
-  - 2% production loss (lose 20% inventory)
-
-## Strategies
-
-- `conservative`: order 150 units weekly
-- `balanced`: order 120 units weekly
-- `aggressive`: order 100 units weekly
-- `custom`: user-defined weekly order quantity
+The API docs are always available at **http://localhost:8000/docs** when running.

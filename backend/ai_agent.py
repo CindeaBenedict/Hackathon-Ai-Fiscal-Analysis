@@ -47,7 +47,16 @@ def generate_text(prompt: str, model: str, system: str | None = None) -> str:
 
 
 def extract_first_int(text: str) -> int:
-    match = re.search(r"-?\d+", text)
-    if not match:
+    # Prefer explicit XML-like answer tags if prompt requested them.
+    tagged = re.search(r"<answer>\s*(-?\d+)\s*</answer>", text, flags=re.IGNORECASE)
+    if tagged:
+        return max(0, int(tagged.group(1)))
+
+    # Fallback: pick the last integer to avoid grabbing percentages from explanations.
+    matches = re.findall(r"-?\d+", text)
+    if not matches:
         return 0
-    return max(0, int(match.group(0)))
+    match = matches[-1]
+    if match is None:
+        return 0
+    return max(0, int(match))
