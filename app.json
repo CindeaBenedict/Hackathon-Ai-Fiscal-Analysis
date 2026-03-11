@@ -1,0 +1,14 @@
+{
+  "name": "Supply Chain Command Center",
+  "description": "Monte Carlo supply chain simulator with AI advisor",
+  "buildpacks": [
+    { "url": "heroku/nodejs" },
+    { "url": "heroku/python" }
+  ],
+  "env": {
+    "VITE_API_BASE_URL": {
+      "description": "Leave empty for full-app deploy (frontend + backend on same origin). Set to backend URL if frontend is on Vercel.",
+      "value": ""
+    }
+  }
+}

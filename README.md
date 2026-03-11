@@ -14,7 +14,7 @@ A **Monte Carlo supply chain simulator** with an **AI advisor**: run hundreds of
   - [Option B: Linux one-command install + start](#option-b-linux-one-command-install--start)
   - [Option C: Local development (no Docker)](#option-c-local-development-no-docker)
   - [Option D: Kubernetes](#option-d-kubernetes)
-  - [Option E: Heroku (backend)](#option-e-heroku-backend)
+  - [Option E: Heroku (full app)](#option-e-heroku-full-app--frontend--backend)
 - [Environment variables](#environment-variables)
 - [API keys and AI providers](#api-keys-and-ai-providers)
 - [Running tests](#running-tests)
@@ -217,29 +217,26 @@ For a fuller picture of how Docker, Kubernetes, and Puppeteer fit together, see 
 
 ---
 
-### Option E: Heroku (backend)
+### Option E: Heroku (full app — frontend + backend)
 
-The repo includes Heroku config at the **root** so you can deploy only the **backend** (FastAPI). The frontend stays on Vercel (or another host); set `VITE_API_BASE_URL` to the Heroku app URL.
+The repo is set up so **one Heroku app** serves both the React frontend and the FastAPI backend. Same URL: open the app in the browser, API calls go to the same origin.
 
-**Files at repo root:** `Procfile`, `runtime.txt`, `requirements.txt` (backend deps + gunicorn).
+**Files at repo root:** `Procfile`, `runtime.txt`, `requirements.txt`, `package.json`, `app.json`.
 
-1. **Heroku CLI** installed and logged in: [devcenter.heroku.com/articles/heroku-cli](https://devcenter.heroku.com/articles/heroku-cli).
-2. **Create app** (from repo root):
+1. **Buildpacks (in order):** Node.js first (builds the frontend), then Python (backend).
+   - In Dashboard: **Settings → Buildpacks → Add buildpack** → `heroku/nodejs`, then `heroku/python`.
+   - Or deploy from GitHub with **app.json** (buildpacks are listed there).
+2. **Config vars** (Dashboard → Settings → Config Vars):
+   - **`VITE_API_BASE_URL`** = leave **empty** for full-app deploy. The frontend will call `/auth/guest`, `/simulate/stable`, etc. on the same origin. (Only set this if you later put the frontend on Vercel and keep the backend on Heroku.)
+   - Optional: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` for AI (no Ollama on Heroku).
+3. **Deploy** from the **root** of the repo:
    ```bash
-   heroku create nume-app-backend
-   # or: heroku create   (Heroku picks a name)
-   ```
-3. **Deploy** from the **root** of the repo (not from `backend/`):
-   ```bash
+   heroku create nume-app
    git push heroku main
    ```
-   Heroku uses the root `Procfile` and `requirements.txt`; the Procfile runs `cd backend && gunicorn ...`.
-4. **Config vars** (optional, in Heroku Dashboard → Settings → Config Vars or `heroku config:set`):
-   - `OLLAMA_BASE_URL` — leave empty if you don’t run Ollama; AI will work only with Claude/OpenAI keys.
-   - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — for cloud AI (can also be set in the app Settings).
-5. **Frontend:** In Vercel set `VITE_API_BASE_URL` = `https://nume-app-backend.herokuapp.com` (your Heroku URL, no trailing slash).
+4. **Build:** Heroku runs `npm run build` (root `package.json` → builds `frontend/`), then `pip install -r requirements.txt`, then `Procfile` starts `gunicorn` in `backend/`. At runtime the backend serves `frontend/dist` at `/` and API routes at `/health`, `/auth/guest`, etc.
 
-**Note:** On Heroku there is no Ollama. For the AI advisor to work, use Claude or OpenAI keys (in Config Vars or in the app Settings).
+**Only backend on Heroku (frontend on Vercel):** Set `VITE_API_BASE_URL` on Vercel to your Heroku URL. Do **not** add the Node buildpack (or Heroku will still build the frontend but you’ll use Vercel). Or use a separate Heroku app with only the Python buildpack and no root `package.json` build.
 
 ---
 
