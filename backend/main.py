@@ -1699,13 +1699,16 @@ def demo_bootstrap_sample_data(
 ) -> dict:
     """
     Create a small tutorial dataset for new users.
-    Safe to call multiple times: only seeds when the user has no breweries/suppliers.
+    Safe to call multiple times: only inserts missing demo items.
     """
     user_id, _ = auth
     existing_breweries = list_breweries_for_user(user_id)
     existing_suppliers = list_suppliers_for_user(user_id)
-    if existing_breweries or existing_suppliers:
-        return {"ok": True, "seeded": False, "breweries_created": 0, "suppliers_created": 0}
+    existing_brewery_names = {str(b.get("name", "")).strip().lower() for b in existing_breweries}
+    existing_supplier_keys = {
+        (str(s.get("name", "")).strip().lower(), str(s.get("category", "")).strip().lower())
+        for s in existing_suppliers
+    }
 
     demo_breweries = [
         {
@@ -1742,16 +1745,31 @@ def demo_bootstrap_sample_data(
         {"name": "FuelGrid Logistics", "category": "fuel", "lat": 41.95, "lng": -87.82, "address": "Chicago, IL", "unit_price": 1.35, "shipping_cost_per_km": 0.17, "lead_time_days": 2},
     ]
 
+    breweries_created = 0
+    suppliers_created = 0
+
     for b in demo_breweries:
+        name_key = str(b.get("name", "")).strip().lower()
+        if name_key in existing_brewery_names:
+            continue
         create_brewery(user_id=user_id, **b)
+        breweries_created += 1
+
     for s in demo_suppliers:
+        supplier_key = (
+            str(s.get("name", "")).strip().lower(),
+            str(s.get("category", "")).strip().lower(),
+        )
+        if supplier_key in existing_supplier_keys:
+            continue
         create_supplier(user_id=user_id, **s)
+        suppliers_created += 1
 
     return {
         "ok": True,
-        "seeded": True,
-        "breweries_created": len(demo_breweries),
-        "suppliers_created": len(demo_suppliers),
+        "seeded": breweries_created > 0 or suppliers_created > 0,
+        "breweries_created": breweries_created,
+        "suppliers_created": suppliers_created,
     }
 
 

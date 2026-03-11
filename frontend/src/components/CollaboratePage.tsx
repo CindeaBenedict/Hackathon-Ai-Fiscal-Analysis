@@ -85,6 +85,7 @@ export default function CollaboratePage({
   const [workspaceBreweries, setWorkspaceBreweries] = useState<Brewery[]>([]);
   const [workspaceSuppliers, setWorkspaceSuppliers] = useState<Supplier[]>([]);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [demoSeedLoading, setDemoSeedLoading] = useState(false);
   const [aiReportLoading, setAiReportLoading] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [workspaceAnalysis, setWorkspaceAnalysis] = useState<WorkspaceAnalysis | null>(null);
@@ -492,6 +493,27 @@ export default function CollaboratePage({
     }
   };
 
+  const restoreExampleData = async () => {
+    setDemoSeedLoading(true);
+    setMessage(null);
+    try {
+      const r = await authFetch(`${apiBaseUrl}/demo/bootstrap-sample-data`, { method: "POST" });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error((d as { detail?: string }).detail ?? "Could not add example data.");
+      }
+      const data = (await r.json()) as { breweries_created?: number; suppliers_created?: number };
+      setMessage({
+        type: "ok",
+        text: `Example data added: ${data.breweries_created ?? 0} breweries, ${data.suppliers_created ?? 0} suppliers.`,
+      });
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof Error ? e.message : "Could not add example data." });
+    } finally {
+      setDemoSeedLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!liveSyncEnabled || !currentWorkspace || !onLoadWorkspaceState) return;
 
@@ -661,6 +683,14 @@ export default function CollaboratePage({
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(editDescription) }}
                 />
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={restoreExampleData}
+                    disabled={demoSeedLoading}
+                  >
+                    {demoSeedLoading ? "Adding examples..." : "Add example data"}
+                  </button>
                   <button type="button" className="secondary-button" onClick={saveDescription} disabled={loading}>
                     Save description
                   </button>
