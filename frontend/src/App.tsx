@@ -19,7 +19,8 @@ const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 const API_BASE_URL = rawApiBaseUrl.length > 0
   ? rawApiBaseUrl.replace(/\/+$/, "")
   : "/api";
-const APP_DOWNLOAD_URL = (import.meta.env.VITE_APP_DOWNLOAD_URL ?? "").trim();
+const DEFAULT_APP_DOWNLOAD_URL = "https://gitlab.com/next-level-challenge/team-28/-/releases";
+const APP_DOWNLOAD_URL = (import.meta.env.VITE_APP_DOWNLOAD_URL ?? "").trim() || DEFAULT_APP_DOWNLOAD_URL;
 
 function uid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -922,7 +923,7 @@ function App() {
         <div className="splash-screen">
           <div className="splash-card">
             <div className="splash-logo">
-              <img src="/logo.png" alt="Supply Chain Command" width={52} height={52} />
+              <img src="/logo-tight.png" alt="Supply Chain Command" />
             </div>
             <h2>Supply Chain Command</h2>
             <p>{authMode === "login" ? "Sign in to collaborate." : "Create an account for collaboration."}</p>
@@ -1083,7 +1084,7 @@ function App() {
         <header className="topbar">
           <div className="topbar-brand">
             <div className="topbar-brand-row">
-              <img src="/logo.png" alt="" className="topbar-logo" />
+              <img src="/logo-tight.png" alt="" className="topbar-logo" />
             </div>
           </div>
           <div className="topbar-right">
@@ -1092,10 +1093,6 @@ function App() {
               <button
                 className="secondary-button"
                 onClick={() => {
-                  if (!APP_DOWNLOAD_URL) {
-                    setError("Download URL is not configured. Set VITE_APP_DOWNLOAD_URL.");
-                    return;
-                  }
                   window.open(APP_DOWNLOAD_URL, "_blank", "noopener,noreferrer");
                 }}
               >
