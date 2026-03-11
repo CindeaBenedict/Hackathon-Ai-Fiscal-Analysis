@@ -8,9 +8,9 @@ import time
 from statistics import NormalDist, pstdev
 import uuid
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from ai_agent import (
@@ -22,7 +22,7 @@ from ai_agent import (
     provider_status,
     pull_model,
 )
-from auth import get_api_key, init_auth_db, login_user, register_user, set_api_key, validate_token
+from auth import get_api_key, init_auth_db, login_user, register_user, set_api_key, validate_token, get_user_from_token
 from data_ingest import (
     parse_csv_bytes,
     parse_excel_bytes,
@@ -59,6 +59,17 @@ from models import (
     Strategy,
     TheoryReportRequest,
     TheoryReportResponse,
+    WorkspaceCreateRequest,
+    WorkspaceDescriptionUpdateRequest,
+    WorkspaceJoinRequest,
+    WorkspaceStateUpdateRequest,
+    BreweryCreateRequest,
+    BreweryUpdateRequest,
+    BreweryResponse,
+    BreweryCompareRequest,
+    BreweryScoreBreakdown,
+    BreweryComparisonItem,
+    BreweryCompareResponse,
 )
 from simulator import (
     SimulationConfig,
@@ -66,9 +77,28 @@ from simulator import (
     run_monte_carlo_compact,
     run_monte_carlo_stable,
 )
+from workspaces import (
+    init_workspaces_db,
+    create_workspace,
+    join_workspace,
+    list_workspaces_for_user,
+    get_workspace,
+    set_workspace_state,
+    get_workspace_members,
+    update_workspace_description,
+)
+from breweries import (
+    init_breweries_db,
+    create_brewery,
+    list_breweries_for_user,
+    get_brewery,
+    update_brewery,
+    delete_brewery,
+)
 
 
 app = FastAPI(title="Supply Chain Uncertainty Simulator")
+api = APIRouter()
 AI_LOGS: list[AILogEntry] = []
 MAX_AI_LOGS = 200
 DATA_FILES: list[DataFileSummary] = []
@@ -107,6 +137,8 @@ def startup_event() -> None:
     print("Backend startup: initializing auth DB...", file=sys.stderr, flush=True)
     try:
         init_auth_db()
+        init_workspaces_db()
+        init_breweries_db()
         print("Backend startup: auth DB OK, starting model pull thread.", file=sys.stderr, flush=True)
         threading.Thread(target=_auto_pull_model, daemon=True).start()
     except Exception as e:
@@ -120,7 +152,12 @@ def health_check() -> dict:
     return {"status": "ok"}
 
 
-@app.get("/ai/status")
+@api.get("/health")
+def api_health_check() -> dict:
+    return {"status": "ok"}
+
+
+@api.get("/ai/status")
 def ai_status() -> dict:
     """Return availability and model lists for every AI provider."""
     return provider_status()
@@ -142,7 +179,18 @@ def require_auth(authorization: str | None = Header(default=None)) -> str:
     return username
 
 
-@app.get("/ai/keys", response_model=AIKeysResponse)
+def require_auth_user(authorization: str | None = Header(default=None)) -> tuple[int, str]:
+    """Like require_auth but returns (user_id, username) for workspace APIs."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token.")
+    token = authorization.split(" ", 1)[1].strip()
+    user_id, username = get_user_from_token(token)
+    if user_id is None or username is None:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+    return (user_id, username)
+
+
+@api.get("/ai/keys", response_model=AIKeysResponse)
 def get_ai_keys() -> AIKeysResponse:
     """Return masked API key status (for Settings UI). No auth required to read status."""
     ak = get_api_key("ANTHROPIC_API_KEY")
@@ -155,7 +203,7 @@ def get_ai_keys() -> AIKeysResponse:
     )
 
 
-@app.put("/ai/keys", response_model=AIKeysResponse)
+@api.put("/ai/keys", response_model=AIKeysResponse)
 def update_ai_keys(
     body: AIKeysUpdateRequest,
     _username: str = Depends(require_auth),
@@ -328,7 +376,7 @@ def _factor_impact_analysis(
     return impacts
 
 
-@app.post("/simulate", response_model=SimulationResponse)
+@api.post("/simulate", response_model=SimulationResponse)
 def simulate(payload: SimulationRequest, _: str = Depends(require_auth)) -> SimulationResponse:
     if payload.strategy == Strategy.custom and payload.order_quantity is None:
         raise HTTPException(
@@ -345,7 +393,7 @@ def simulate(payload: SimulationRequest, _: str = Depends(require_auth)) -> Simu
     return SimulationResponse(**result)
 
 
-@app.post("/simulate/compact", response_model=CompactSimulationResponse)
+@api.post("/simulate/compact", response_model=CompactSimulationResponse)
 def simulate_compact(
     payload: SimulationRequest, _: str = Depends(require_auth)
 ) -> CompactSimulationResponse:
@@ -364,7 +412,7 @@ def simulate_compact(
     return CompactSimulationResponse(**result)
 
 
-@app.post("/ai/order-advice", response_model=AIOrderAdviceResponse)
+@api.post("/ai/order-advice", response_model=AIOrderAdviceResponse)
 def ai_order_advice(
     payload: AIOrderAdviceRequest, _: str = Depends(require_auth)
 ) -> AIOrderAdviceResponse:
@@ -388,7 +436,7 @@ Return only one integer wrapped as <answer>NUMBER</answer>.
     )
 
 
-@app.post("/ai/recommend-order-for-simulation", response_model=AIRecommendOrderForSimulationResponse)
+@api.post("/ai/recommend-order-for-simulation", response_model=AIRecommendOrderForSimulationResponse)
 def ai_recommend_order_for_simulation(
     payload: AIRecommendOrderForSimulationRequest, _: str = Depends(require_auth)
 ) -> AIRecommendOrderForSimulationResponse:
@@ -422,7 +470,7 @@ Reply with only one integer. If you use tags, use <answer>NUMBER</answer>.""".st
     )
 
 
-@app.post("/ai/advisor", response_model=AIAdvisorResponse)
+@api.post("/ai/advisor", response_model=AIAdvisorResponse)
 def ai_advisor(payload: AIAdvisorRequest, _: str = Depends(require_auth)) -> AIAdvisorResponse:
     if payload.strategy == Strategy.custom and payload.order_quantity is None:
         raise HTTPException(
@@ -466,7 +514,7 @@ Keep each bullet under 25 words.""".strip()
     )
 
 
-@app.post("/ai/advisor-summary", response_model=AIAdvisorSummaryResponse)
+@api.post("/ai/advisor-summary", response_model=AIAdvisorSummaryResponse)
 def ai_advisor_summary(
     payload: AIAdvisorSummaryRequest, _: str = Depends(require_auth)
 ) -> AIAdvisorSummaryResponse:
@@ -503,7 +551,7 @@ Keep each bullet under 25 words.""".strip()
     return AIAdvisorSummaryResponse(model=payload.model, summary=summary or "")
 
 
-@app.post("/ai/advisor-distribution", response_model=AIAdvisorDistributionResponse)
+@api.post("/ai/advisor-distribution", response_model=AIAdvisorDistributionResponse)
 def ai_advisor_distribution(
     payload: AIAdvisorRequest, _: str = Depends(require_auth)
 ) -> AIAdvisorDistributionResponse:
@@ -548,18 +596,18 @@ Example format:
     return AIAdvisorDistributionResponse(model=payload.model, profits=profits)
 
 
-@app.get("/ai/logs", response_model=list[AILogEntry])
+@api.get("/ai/logs", response_model=list[AILogEntry])
 def get_ai_logs(_: str = Depends(require_auth)) -> list[AILogEntry]:
     return AI_LOGS
 
 
-@app.delete("/ai/logs")
+@api.delete("/ai/logs")
 def clear_ai_logs(_: str = Depends(require_auth)) -> dict:
     AI_LOGS.clear()
     return {"status": "cleared"}
 
 
-@app.post("/data/upload", response_model=DataFileSummary)
+@api.post("/data/upload", response_model=DataFileSummary)
 async def upload_data_file(
     file: UploadFile = File(...), _: str = Depends(require_auth)
 ) -> DataFileSummary:
@@ -595,19 +643,19 @@ async def upload_data_file(
     return summary
 
 
-@app.get("/data/files", response_model=list[DataFileSummary])
+@api.get("/data/files", response_model=list[DataFileSummary])
 def list_data_files(_: str = Depends(require_auth)) -> list[DataFileSummary]:
     return DATA_FILES
 
 
-@app.delete("/data/files")
+@api.delete("/data/files")
 def clear_data_files(_: str = Depends(require_auth)) -> dict:
     DATA_FILES.clear()
     RAW_DATA_BY_FILE.clear()
     return {"status": "cleared"}
 
 
-@app.post("/ai/data-chat", response_model=DataChatResponse)
+@api.post("/ai/data-chat", response_model=DataChatResponse)
 def ai_data_chat(payload: DataChatRequest, _: str = Depends(require_auth)) -> DataChatResponse:
     if not DATA_FILES:
         raise HTTPException(
@@ -641,7 +689,7 @@ User question:
     return DataChatResponse(model=payload.model, answer=answer or "")
 
 
-@app.post("/ai/sim-chat", response_model=SimChatResponse)
+@api.post("/ai/sim-chat", response_model=SimChatResponse)
 def sim_chat(payload: SimChatRequest, _: str = Depends(require_auth)) -> SimChatResponse:
     """
     Interactive AI chat about the current simulation results.
@@ -723,7 +771,7 @@ Advisor:"""
     return SimChatResponse(model=payload.model, answer=(answer or "").strip())
 
 
-@app.post("/theory/report", response_model=TheoryReportResponse)
+@api.post("/theory/report", response_model=TheoryReportResponse)
 def theory_report(
     payload: TheoryReportRequest, _: str = Depends(require_auth)
 ) -> TheoryReportResponse:
@@ -815,7 +863,7 @@ Write:
     )
 
 
-@app.post("/simulate/stable", response_model=SimulationResponse)
+@api.post("/simulate/stable", response_model=SimulationResponse)
 def simulate_stable(
     payload: SimulationRequest, _: str = Depends(require_auth)
 ) -> SimulationResponse:
@@ -833,7 +881,331 @@ def simulate_stable(
     return SimulationResponse(**result)
 
 
-@app.post("/auth/register", response_model=AuthResponse)
+def _workspace_results_to_csv_rows(config: dict | None, results: dict | None) -> str:
+    """Build CSV text from workspace state (summary + profits list when available)."""
+    lines: list[str] = []
+    lines.append("section,key,value")
+    if config:
+        for key in sorted(config.keys()):
+            val = str(config.get(key, ""))
+            escaped = val.replace('"', '""')
+            lines.append(f'config,{key},"{escaped}"')
+    if results:
+        for key in [
+            "avg_profit",
+            "best_profit",
+            "worst_profit",
+            "profit_p10",
+            "profit_p50",
+            "profit_p90",
+            "stockouts_average",
+            "bankruptcy_probability",
+            "bankruptcy_count",
+            "actual_simulations",
+        ]:
+            if key in results:
+                val = str(results.get(key, ""))
+                escaped = val.replace('"', '""')
+                lines.append(f'result_summary,{key},"{escaped}"')
+        profits = results.get("profits")
+        if isinstance(profits, list):
+            lines.append("profit_samples,run_index,profit")
+            for idx, p in enumerate(profits, start=1):
+                lines.append(f"profit_samples,{idx},{p}")
+    return "\n".join(lines) + "\n"
+
+
+# ── Workspaces (collaboration) ─────────────────────────────────────────────
+
+@api.post("/workspaces")
+def workspace_create(
+    payload: WorkspaceCreateRequest,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    """Create a new shared workspace. Returns id, invite_code, name."""
+    user_id, _ = auth
+    name = (payload.name or "Shared Workspace").strip() or "Shared Workspace"
+    description = (payload.description or "").strip()
+    return create_workspace(user_id, name=name, description=description)
+
+
+@api.post("/workspaces/join")
+def workspace_join(
+    payload: WorkspaceJoinRequest,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    """Join a workspace by invite code. Returns workspace { id, invite_code, name }."""
+    user_id, _ = auth
+    ws = join_workspace(user_id, payload.invite_code)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Invalid or unknown invite code.")
+    return ws
+
+
+@api.get("/workspaces")
+def workspace_list(
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> list:
+    """List workspaces the current user is a member of."""
+    user_id, _ = auth
+    return list_workspaces_for_user(user_id)
+
+
+@api.get("/workspaces/{workspace_id}")
+def workspace_get(
+    workspace_id: int,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    """Get workspace details and state (if member)."""
+    user_id, _ = auth
+    ws = get_workspace(workspace_id, user_id)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Workspace not found or access denied.")
+    return ws
+
+
+@api.put("/workspaces/{workspace_id}/description")
+def workspace_set_description(
+    workspace_id: int,
+    payload: WorkspaceDescriptionUpdateRequest,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    """Update workspace description for collaborators."""
+    user_id, _ = auth
+    ws = update_workspace_description(workspace_id, user_id, payload.description)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Workspace not found or access denied.")
+    return ws
+
+
+@api.get("/workspaces/{workspace_id}/export.csv")
+def workspace_export_csv(
+    workspace_id: int,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> Response:
+    """Download workspace config/results as CSV."""
+    user_id, _ = auth
+    ws = get_workspace(workspace_id, user_id)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Workspace not found or access denied.")
+    state = ws.get("state") or {}
+    csv_text = _workspace_results_to_csv_rows(
+        state.get("config") if isinstance(state, dict) else None,
+        state.get("results") if isinstance(state, dict) else None,
+    )
+    filename = f'workspace_{workspace_id}_export.csv'
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api.put("/workspaces/{workspace_id}/state")
+def workspace_update_state(
+    workspace_id: int,
+    payload: WorkspaceStateUpdateRequest,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    """Save simulation config and/or results to the workspace for others to see."""
+    user_id, username = auth
+    ok = set_workspace_state(
+        workspace_id, user_id, username,
+        config=payload.config,
+        results=payload.results,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Workspace not found or access denied.")
+    return {"ok": True}
+
+
+@api.get("/workspaces/{workspace_id}/members")
+def workspace_members(
+    workspace_id: int,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> list:
+    """List members of the workspace (username, role)."""
+    user_id, _ = auth
+    members = get_workspace_members(workspace_id, user_id)
+    if members is None:
+        raise HTTPException(status_code=404, detail="Workspace not found or access denied.")
+    return members
+
+
+# ── Breweries (multi-location map) ──────────────────────────────────────────
+
+@api.get("/breweries", response_model=list[BreweryResponse])
+def breweries_list(
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> list:
+    """List all breweries for the current user."""
+    user_id, _ = auth
+    return list_breweries_for_user(user_id)
+
+
+@api.post("/breweries", response_model=BreweryResponse)
+def breweries_create(
+    payload: BreweryCreateRequest,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    """Create a new brewery (name, lat, lng, optional address)."""
+    user_id, _ = auth
+    return create_brewery(
+        user_id=user_id,
+        name=payload.name,
+        lat=payload.lat,
+        lng=payload.lng,
+        address=payload.address,
+        description=payload.description,
+        avg_monthly_revenue=payload.avg_monthly_revenue,
+        quality_score=payload.quality_score,
+        efficiency_score=payload.efficiency_score,
+        popularity_score=payload.popularity_score,
+        sustainability_score=payload.sustainability_score,
+    )
+
+
+@api.get("/breweries/{brewery_id}", response_model=BreweryResponse)
+def breweries_get(
+    brewery_id: int,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    """Get a single brewery by id."""
+    user_id, _ = auth
+    brewery = get_brewery(brewery_id, user_id)
+    if brewery is None:
+        raise HTTPException(status_code=404, detail="Brewery not found.")
+    return brewery
+
+
+@api.put("/breweries/{brewery_id}", response_model=BreweryResponse)
+def breweries_update(
+    brewery_id: int,
+    payload: BreweryUpdateRequest,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    """Update a brewery."""
+    user_id, _ = auth
+    brewery = update_brewery(
+        brewery_id=brewery_id,
+        user_id=user_id,
+        name=payload.name,
+        lat=payload.lat,
+        lng=payload.lng,
+        address=payload.address,
+        description=payload.description,
+        avg_monthly_revenue=payload.avg_monthly_revenue,
+        quality_score=payload.quality_score,
+        efficiency_score=payload.efficiency_score,
+        popularity_score=payload.popularity_score,
+        sustainability_score=payload.sustainability_score,
+    )
+    if brewery is None:
+        raise HTTPException(status_code=404, detail="Brewery not found.")
+    return brewery
+
+
+@api.delete("/breweries/{brewery_id}")
+def breweries_delete(
+    brewery_id: int,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    """Delete a brewery."""
+    user_id, _ = auth
+    if not delete_brewery(brewery_id, user_id):
+        raise HTTPException(status_code=404, detail="Brewery not found.")
+    return {"ok": True}
+
+
+@api.post("/ai/breweries/compare", response_model=BreweryCompareResponse)
+def breweries_compare(
+    payload: BreweryCompareRequest,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> BreweryCompareResponse:
+    """Compare multiple breweries and identify the strongest performer."""
+    user_id, _ = auth
+    all_breweries = list_breweries_for_user(user_id)
+    if not all_breweries:
+        raise HTTPException(status_code=400, detail="No breweries found.")
+
+    selected = all_breweries
+    if payload.brewery_ids:
+        ids = set(payload.brewery_ids)
+        selected = [b for b in all_breweries if int(b["id"]) in ids]
+    if len(selected) < 2:
+        raise HTTPException(status_code=400, detail="Select at least 2 breweries to compare.")
+
+    max_revenue = max(float(b.get("avg_monthly_revenue", 0) or 0) for b in selected)
+    revenue_divisor = max(max_revenue, 1.0)
+
+    rankings: list[BreweryComparisonItem] = []
+    for b in selected:
+        revenue_score = (float(b.get("avg_monthly_revenue", 0) or 0) / revenue_divisor) * 100.0
+        quality_score = float(b.get("quality_score", 0) or 0)
+        efficiency_score = float(b.get("efficiency_score", 0) or 0)
+        popularity_score = float(b.get("popularity_score", 0) or 0)
+        sustainability_score = float(b.get("sustainability_score", 0) or 0)
+        weighted_total = (
+            revenue_score * 0.35
+            + quality_score * 0.20
+            + efficiency_score * 0.20
+            + popularity_score * 0.15
+            + sustainability_score * 0.10
+        )
+        rankings.append(
+            BreweryComparisonItem(
+                brewery_id=int(b["id"]),
+                brewery_name=str(b["name"]),
+                score=round(weighted_total, 2),
+                breakdown=BreweryScoreBreakdown(
+                    revenue_score=round(revenue_score, 2),
+                    quality_score=round(quality_score, 2),
+                    efficiency_score=round(efficiency_score, 2),
+                    popularity_score=round(popularity_score, 2),
+                    sustainability_score=round(sustainability_score, 2),
+                    weighted_total=round(weighted_total, 2),
+                ),
+            )
+        )
+    rankings.sort(key=lambda x: x.score, reverse=True)
+    best = rankings[0]
+
+    table_lines = []
+    for r in rankings:
+        table_lines.append(
+            f'- {r.brewery_name}: total={r.score:.2f}, '
+            f'revenue={r.breakdown.revenue_score:.1f}, quality={r.breakdown.quality_score:.1f}, '
+            f'efficiency={r.breakdown.efficiency_score:.1f}, popularity={r.breakdown.popularity_score:.1f}, '
+            f'sustainability={r.breakdown.sustainability_score:.1f}'
+        )
+    prompt = f"""You are a brewery operations analyst.
+Given the comparison scores below, explain why the top brewery is winning and what it is doing right.
+Do not invent numbers.
+
+RANKING:
+{chr(10).join(table_lines)}
+
+Write:
+1) one short sentence naming the best brewery,
+2) 3 bullet points on what this brewery does right,
+3) 2 actions other breweries can copy.
+Keep concise and practical."""
+    ai_summary, err, _ = _timed_ai_call("ai.breweries.compare", payload.model, prompt, max_tokens=500)
+    if err:
+        ai_summary = (
+            f'{best.brewery_name} leads due to a stronger weighted mix of revenue, quality, and efficiency. '
+            "Capture its operating practices and replicate high-scoring areas in other sites."
+        )
+
+    return BreweryCompareResponse(
+        best_brewery_id=best.brewery_id,
+        best_brewery_name=best.brewery_name,
+        rankings=rankings,
+        ai_summary=ai_summary or "",
+    )
+
+
+@api.post("/auth/register", response_model=AuthResponse)
 def auth_register(payload: AuthRegisterRequest) -> AuthResponse:
     try:
         register_user(payload.username, payload.password)
@@ -845,7 +1217,7 @@ def auth_register(payload: AuthRegisterRequest) -> AuthResponse:
     return AuthResponse(token=token, username=payload.username)
 
 
-@app.post("/auth/login", response_model=AuthResponse)
+@api.post("/auth/login", response_model=AuthResponse)
 def auth_login(payload: AuthLoginRequest) -> AuthResponse:
     token = login_user(payload.username, payload.password)
     if token is None:
@@ -853,7 +1225,7 @@ def auth_login(payload: AuthLoginRequest) -> AuthResponse:
     return AuthResponse(token=token, username=payload.username)
 
 
-@app.post("/auth/guest", response_model=AuthResponse)
+@api.post("/auth/guest", response_model=AuthResponse)
 def auth_guest() -> AuthResponse:
     guest_username = "guest"
     guest_password = "guest-pass-1234"
@@ -884,7 +1256,7 @@ def _to_float(value: object) -> float | None:
     return None
 
 
-@app.post("/ai/process-file/{file_id}", response_model=ProcessFileResponse)
+@api.post("/ai/process-file/{file_id}", response_model=ProcessFileResponse)
 def ai_process_file(
     file_id: str,
     payload: ProcessFileRequest,
@@ -939,6 +1311,12 @@ Return 3 concise bullet points.
         processed_sample_rows=processed_rows[:20],
         ai_notes=ai_notes,
     )
+
+
+# Mount API under /api so same-origin frontend (e.g. Heroku) can call /api/auth/guest, etc.
+# Also mount without prefix so /auth/guest works when frontend uses empty API_BASE_URL.
+app.include_router(api, prefix="/api")
+app.include_router(api)
 
 
 # ── Serve frontend when built (e.g. full app on Heroku) ─────────────────────

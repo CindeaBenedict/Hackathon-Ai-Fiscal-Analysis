@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# ./run  —  Start everything locally for development (no Docker needed)
+#
+#   • Ollama   → local AI (port 11434)
+#   • Backend  → FastAPI / uvicorn (port 8000)
+#   • Frontend → Vite dev server  (port 5173)
+#
+# Logs from all three appear in one terminal, colour-coded by service.
+# Press Ctrl+C once to stop everything cleanly.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+# ── Colours ───────────────────────────────────────────────────────────────────
+RESET='\033[0m'; BOLD='\033[1m'
+C_OLLAMA='\033[0;35m'   # magenta
+C_BACK='\033[0;36m'     # cyan
+C_FRONT='\033[0;32m'    # green
+C_INFO='\033[0;34m'     # blue
+C_WARN='\033[0;33m'     # yellow
+C_ERR='\033[0;31m'      # red
+
+log()  { echo -e "${C_INFO}[run]${RESET}  $*"; }
+warn() { echo -e "${C_WARN}[run]${RESET}  ⚠  $*"; }
+fail() { echo -e "${C_ERR}[run]${RESET}  ✗  $*" >&2; }
+
+# ── PID tracking ──────────────────────────────────────────────────────────────
+PIDS=()
+
+cleanup() {
+  echo ""
+  log "Shutting down all services…"
+  for pid in "${PIDS[@]}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+  wait "${PIDS[@]}" 2>/dev/null || true
+  log "All stopped. Bye!"
+}
+trap cleanup EXIT INT TERM
+
+# ── Prefixed log stream ───────────────────────────────────────────────────────
+stream() {
+  local color="$1" label="$2"; shift 2
+  "$@" 2>&1 | while IFS= read -r line; do
+    echo -e "${color}[${label}]${RESET}  ${line}"
+  done &
+  PIDS+=($!)
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}${C_INFO}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${BOLD}${C_INFO}   Supply Chain Command — local dev mode${RESET}"
+echo -e "${C_INFO}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo ""
+
+# ── 1. Ollama ─────────────────────────────────────────────────────────────────
+if command -v ollama &>/dev/null; then
+  if curl -sf http://localhost:11434/api/tags &>/dev/null; then
+    log "Ollama already running  ✓"
+  else
+    log "Starting Ollama…"
+    stream "$C_OLLAMA" "ollama" ollama serve
+    sleep 2
+  fi
+
+  # Pull default model if missing (background, non-blocking)
+  DEFAULT_MODEL="${DEFAULT_MODEL:-llama3.2:1b}"
+  if ! ollama list 2>/dev/null | grep -q "${DEFAULT_MODEL%%:*}"; then
+    log "Pulling ${DEFAULT_MODEL} in background (first-time download)…"
+    (ollama pull "$DEFAULT_MODEL" &>/dev/null) &
+  else
+    log "Model ${DEFAULT_MODEL} ready  ✓"
+  fi
+else
+  warn "Ollama not installed — AI features unavailable."
+  warn "Install from https://ollama.com to enable local AI."
+fi
+
+# ── 2. Backend ────────────────────────────────────────────────────────────────
+if [[ ! -d "backend/.venv" ]]; then
+  log "Creating Python virtual environment…"
+  python3 -m venv backend/.venv
+  backend/.venv/bin/pip install -q -r backend/requirements.txt
+fi
+
+log "Starting backend on :8000 …"
+stream "$C_BACK" "backend" \
+  backend/.venv/bin/uvicorn main:app \
+    --reload \
+    --port 8000 \
+    --app-dir backend \
+    --log-level info
+
+# Wait a moment for the server to bind before starting the frontend
+sleep 2
+
+# ── 3. Frontend ───────────────────────────────────────────────────────────────
+if [[ ! -d "frontend/node_modules" ]]; then
+  log "Installing frontend dependencies (first time)…"
+  (cd frontend && npm install --silent)
+fi
+
+log "Starting frontend on :5173 …"
+stream "$C_FRONT" "frontend" \
+  bash -c "cd frontend && npm run dev"
+
+# ── Ready ─────────────────────────────────────────────────────────────────────
+sleep 2
+echo ""
+echo -e "${BOLD}${C_INFO}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "  ${BOLD}Frontend${RESET}   →  ${C_FRONT}http://localhost:5173${RESET}"
+echo -e "  ${BOLD}Backend${RESET}    →  ${C_BACK}http://localhost:8000${RESET}"
+echo -e "  ${BOLD}API docs${RESET}   →  ${C_BACK}http://localhost:8000/docs${RESET}"
+echo -e "  ${BOLD}Ollama${RESET}     →  ${C_OLLAMA}http://localhost:11434${RESET}"
+echo -e "${C_INFO}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "  Press ${BOLD}Ctrl+C${RESET} to stop everything"
+echo ""
+
+# Open browser on macOS
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  sleep 1 && open http://localhost:5173 &
+fi
+
+# ── Wait forever (until Ctrl+C) ───────────────────────────────────────────────
+wait

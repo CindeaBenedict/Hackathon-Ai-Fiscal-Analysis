@@ -295,3 +295,95 @@ class TheoryReportResponse(BaseModel):
     mathematical_notes: List[str]
     factor_impacts: List[FactorImpact]
     ai_explanation: Optional[str] = None
+
+
+# ── Workspaces (collaboration) ─────────────────────────────────────────────
+
+class WorkspaceCreateRequest(BaseModel):
+    name: Optional[str] = Field(default="Shared Workspace", max_length=128)
+    description: Optional[str] = Field(default=None, max_length=512)
+
+
+class WorkspaceJoinRequest(BaseModel):
+    invite_code: str = Field(min_length=1, max_length=32)
+
+
+class WorkspaceStateUpdateRequest(BaseModel):
+    """Current simulation config and/or results to save to the workspace."""
+    config: Optional[dict] = None
+    results: Optional[dict] = None
+
+
+class WorkspaceDescriptionUpdateRequest(BaseModel):
+    description: Optional[str] = Field(default=None, max_length=512)
+
+
+# ── Breweries (multi-location map) ──────────────────────────────────────────
+
+class BreweryCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    address: Optional[str] = Field(default=None, max_length=256)
+    description: Optional[str] = Field(default=None, max_length=512)
+    avg_monthly_revenue: float = Field(default=0, ge=0)
+    quality_score: float = Field(default=50, ge=0, le=100)
+    efficiency_score: float = Field(default=50, ge=0, le=100)
+    popularity_score: float = Field(default=50, ge=0, le=100)
+    sustainability_score: float = Field(default=50, ge=0, le=100)
+
+
+class BreweryUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    lng: Optional[float] = Field(default=None, ge=-180, le=180)
+    address: Optional[str] = Field(default=None, max_length=256)
+    description: Optional[str] = Field(default=None, max_length=512)
+    avg_monthly_revenue: Optional[float] = Field(default=None, ge=0)
+    quality_score: Optional[float] = Field(default=None, ge=0, le=100)
+    efficiency_score: Optional[float] = Field(default=None, ge=0, le=100)
+    popularity_score: Optional[float] = Field(default=None, ge=0, le=100)
+    sustainability_score: Optional[float] = Field(default=None, ge=0, le=100)
+
+
+class BreweryResponse(BaseModel):
+    id: int
+    name: str
+    lat: float
+    lng: float
+    address: str
+    description: str
+    avg_monthly_revenue: float
+    quality_score: float
+    efficiency_score: float
+    popularity_score: float
+    sustainability_score: float
+    created_at: str
+
+
+class BreweryCompareRequest(BaseModel):
+    brewery_ids: Optional[List[int]] = None
+    model: str = Field(default="llama3.2:1b")
+
+
+class BreweryScoreBreakdown(BaseModel):
+    revenue_score: float
+    quality_score: float
+    efficiency_score: float
+    popularity_score: float
+    sustainability_score: float
+    weighted_total: float
+
+
+class BreweryComparisonItem(BaseModel):
+    brewery_id: int
+    brewery_name: str
+    score: float
+    breakdown: BreweryScoreBreakdown
+
+
+class BreweryCompareResponse(BaseModel):
+    best_brewery_id: int
+    best_brewery_name: str
+    rankings: List[BreweryComparisonItem]
+    ai_summary: str

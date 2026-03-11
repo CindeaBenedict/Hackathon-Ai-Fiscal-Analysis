@@ -121,6 +121,23 @@ def validate_token(token: str) -> str | None:
         return str(row["username"])
 
 
+def get_user_from_token(token: str) -> tuple[int | None, str | None]:
+    """Return (user_id, username) for the given session token, or (None, None)."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT u.id, u.username
+            FROM sessions s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.token = ?
+            """,
+            (token,),
+        ).fetchone()
+        if row is None:
+            return (None, None)
+        return (int(row["id"]), str(row["username"]))
+
+
 def get_api_key(key_name: str) -> str | None:
     """Get API key from DB (app-configured keys). Returns None if not set."""
     with _get_conn() as conn:

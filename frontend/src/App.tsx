@@ -4,6 +4,9 @@ import AnalysisDashboard, { SimChatMessage, SimulationResults } from "./componen
 import StrategySelector, { Strategy } from "./components/StrategySelector";
 import TheoryPage, { TheoryReport } from "./components/TheoryPage";
 import SettingsPage from "./components/SettingsPage";
+import CollaboratePage, { STORAGE_KEY as WORKSPACE_STORAGE_KEY } from "./components/CollaboratePage";
+import BreweriesPage, { Brewery } from "./components/BreweriesPage";
+import type { Workspace } from "./components/CollaboratePage";
 
 type SimulationResponse = SimulationResults;
 
@@ -12,7 +15,10 @@ type AuthResponse = {
   username: string;
 };
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
+const API_BASE_URL = rawApiBaseUrl.length > 0
+  ? rawApiBaseUrl.replace(/\/+$/, "")
+  : "/api";
 
 function uid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -34,7 +40,7 @@ const DEFAULT_ORDER_BY_STRATEGY: Record<Strategy, number> = {
 
 function App() {
   const [activePage, setActivePage] = useState<
-    "dashboard" | "logs" | "theory" | "settings"
+    "dashboard" | "logs" | "theory" | "collaborate" | "breweries" | "settings"
   >("dashboard");
   const [darkMode, setDarkMode] = useState(true);
   const [strategy, setStrategy] = useState<Strategy>("custom");
@@ -61,12 +67,18 @@ function App() {
     localStorage.getItem("auth_token"),
   );
   const [username, setUsername] = useState<string>(localStorage.getItem("auth_user") || "");
+  const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
+  const [breweries, setBreweries] = useState<Brewery[]>([]);
+  const [currentBrewery, setCurrentBrewery] = useState<Brewery | null>(null);
   const [authBootstrapLoading, setAuthBootstrapLoading] = useState(false);
-  const [bootstrapRetry, setBootstrapRetry] = useState(0);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authUsernameInput, setAuthUsernameInput] = useState("");
+  const [authPasswordInput, setAuthPasswordInput] = useState("");
+  const [authPasswordConfirmInput, setAuthPasswordConfirmInput] = useState("");
   const bootstrapStarted = useRef(false);
   const simulationAbortRef = useRef<AbortController | null>(null);
   const railItems: Array<{
-    id: "dashboard" | "logs" | "theory" | "settings";
+    id: "dashboard" | "logs" | "theory" | "collaborate" | "breweries" | "settings";
     title: string;
     icon: React.ReactNode;
   }> = [
@@ -100,6 +112,27 @@ function App() {
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
           <path d="M6 3h8L11 10l3 7H6l3-7L6 3z" />
+        </svg>
+      ),
+    },
+    {
+      id: "collaborate",
+      title: "Collaborate",
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+          <path d="M14 17c0 1.5-1.5 2.5-4 2.5s-4-1-4-2.5 1.5-2.5 4-2.5 4 1 4 2.5z" />
+          <path d="M14 10c0 1.5-1.5 2.5-4 2.5S6 11.5 6 10s1.5-2.5 4-2.5 4 1 4 2.5z" />
+          <path d="M14 3c0 1.5-1.5 2.5-4 2.5S6 4.5 6 3s1.5-2.5 4-2.5 4 1 4 2.5z" />
+        </svg>
+      ),
+    },
+    {
+      id: "breweries",
+      title: "Breweries",
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+          <path d="M10 2c-3.3 0-6 2.7-6 6 0 4.5 6 11 6 11s6-6.5 6-11c0-3.3-2.7-6-6-6z" />
+          <circle cx="10" cy="8" r="2.2" />
         </svg>
       ),
     },
@@ -147,10 +180,93 @@ function App() {
         localStorage.removeItem("auth_user");
         bootstrapStarted.current = false;
         setAuthToken(null);
-        setBootstrapRetry((r) => r + 1);
+        setUsername("");
       }
       return res;
     });
+  }
+
+  function setSession(data: AuthResponse) {
+    setAuthToken(data.token);
+    setUsername(data.username);
+    localStorage.setItem("auth_token", data.token);
+    localStorage.setItem("auth_user", data.username);
+  }
+
+  function clearSession() {
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("auth_user");
+    bootstrapStarted.current = false;
+    setAuthToken(null);
+    setUsername("");
+    setCurrentWorkspace(null);
+  }
+
+  async function submitAuth() {
+    setError("");
+    if (!authUsernameInput.trim() || !authPasswordInput.trim()) {
+      setError("Enter username and password.");
+      return;
+    }
+    if (authMode === "register") {
+      if (authPasswordInput.length < 8) {
+        setError("Password must be at least 8 characters.");
+        return;
+      }
+      if (authPasswordInput !== authPasswordConfirmInput) {
+        setError("Passwords do not match.");
+        return;
+      }
+    }
+    setAuthBootstrapLoading(true);
+    try {
+      const endpoint = authMode === "login" ? "login" : "register";
+      const response = await fetch(`${API_BASE_URL}/auth/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: authUsernameInput.trim(),
+          password: authPasswordInput,
+        }),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        let detail = text;
+        try {
+          const json = JSON.parse(text) as { detail?: string };
+          detail = json.detail ?? detail;
+        } catch {
+          // use raw text
+        }
+        throw new Error(detail || `HTTP ${response.status}`);
+      }
+      const data = JSON.parse(text) as AuthResponse;
+      setSession(data);
+      setAuthPasswordInput("");
+      setAuthPasswordConfirmInput("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Authentication failed.");
+    } finally {
+      setAuthBootstrapLoading(false);
+    }
+  }
+
+  async function continueAsGuest() {
+    setError("");
+    setAuthBootstrapLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/guest`, { method: "POST" });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+      const data = JSON.parse(text) as AuthResponse;
+      setSession(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start guest session.");
+    } finally {
+      setAuthBootstrapLoading(false);
+    }
   }
 
   async function runSimulation() {
@@ -264,6 +380,26 @@ function App() {
         },
         level: "success",
       });
+
+      // If in a shared workspace, push config + results so others can load them
+      if (currentWorkspace) {
+        const config = {
+          strategy,
+          customOrderQuantity: effectiveStrategy === "custom" ? effectiveOrderQuantity : customOrderQuantity,
+          simulations,
+          initialCash,
+          demandStdDev,
+          weeklyFixedCost,
+          bankruptcyThreshold,
+          salePrice,
+          aiModel,
+        };
+        authFetch(`${API_BASE_URL}/workspaces/${currentWorkspace.id}/state`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config, results: data }),
+        }).catch(() => {});
+      }
 
       // Initial AI analysis from the math results (non-blocking)
       fetchInitialAdvisorSummary(data);
@@ -517,47 +653,6 @@ function App() {
     }
   }
 
-  // Run once on mount. useRef prevents double-fire in React StrictMode dev.
-  useEffect(() => {
-    if (authToken || bootstrapStarted.current) return;
-    bootstrapStarted.current = true;
-
-    const BOOTSTRAP_TIMEOUT_MS = 15000;
-
-    async function initGuest() {
-      setAuthBootstrapLoading(true);
-      setError("");
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), BOOTSTRAP_TIMEOUT_MS);
-      try {
-        const res = await fetch(`${API_BASE_URL}/auth/guest`, {
-          method: "POST",
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        if (!res.ok) throw new Error(await res.text());
-        const data = (await res.json()) as AuthResponse;
-        setAuthToken(data.token);
-        setUsername(data.username);
-        localStorage.setItem("auth_token", data.token);
-        localStorage.setItem("auth_user", data.username);
-      } catch (err) {
-        clearTimeout(timeoutId);
-        bootstrapStarted.current = false; // allow retry on error
-        const message =
-          err instanceof Error && err.name === "AbortError"
-            ? "Backend did not respond in time. Check that the API URL is correct and CORS allows this origin."
-            : err instanceof Error
-              ? err.message
-              : "Failed to start session.";
-        setError(message);
-      } finally {
-        setAuthBootstrapLoading(false);
-      }
-    }
-    void initGuest();
-  }, [bootstrapRetry]); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => {
     if (!authToken) {
       return;
@@ -567,38 +662,104 @@ function App() {
     }
   }, [activePage, authToken]);
 
+  // Restore current workspace from localStorage once we have auth
+  useEffect(() => {
+    if (!authToken) return;
+    const storedId = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    if (!storedId) return;
+    authFetch(`${API_BASE_URL}/workspaces`)
+      .then((r) => {
+        if (!r.ok) return r.json().then(() => null);
+        return r.json() as Promise<Workspace[]>;
+      })
+      .then((list) => {
+        if (!list?.length) return;
+        const id = parseInt(storedId, 10);
+        const ws = list.find((w) => w.id === id);
+        if (ws) setCurrentWorkspace(ws);
+      })
+      .catch(() => {});
+  }, [authToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function loadWorkspaceState(config: Record<string, unknown> | null, resultsData: Record<string, unknown> | null) {
+    if (config) {
+      if (typeof config.strategy === "string" && ["conservative", "balanced", "aggressive", "custom", "ai_recommended"].includes(config.strategy)) {
+        setStrategy(config.strategy as Strategy);
+      }
+      if (typeof config.customOrderQuantity === "number") setCustomOrderQuantity(config.customOrderQuantity);
+      if (typeof config.simulations === "number") setSimulations(config.simulations);
+      if (typeof config.initialCash === "number") setInitialCash(config.initialCash);
+      if (typeof config.demandStdDev === "number") setDemandStdDev(config.demandStdDev);
+      if (typeof config.weeklyFixedCost === "number") setWeeklyFixedCost(config.weeklyFixedCost);
+      if (typeof config.bankruptcyThreshold === "number") setBankruptcyThreshold(config.bankruptcyThreshold);
+      if (typeof config.salePrice === "number") setSalePrice(config.salePrice);
+      if (typeof config.aiModel === "string") setAiModel(config.aiModel);
+    }
+    if (resultsData && typeof resultsData === "object" && "avg_profit" in resultsData && "profits" in resultsData) {
+      setResults(resultsData as SimulationResponse);
+      setSimChat([]);
+    }
+  }
+
   if (!authToken) {
     return (
       <div className={darkMode ? "" : "theme-light"}>
         <div className="splash-screen">
           <div className="splash-card">
             <div className="splash-logo">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
-                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-              </svg>
+              <img src="/logo.png" alt="Supply Chain Command" width={52} height={52} />
             </div>
             <h2>Supply Chain Command</h2>
-            {error ? (
-              <>
-                <p className="error" style={{ marginTop: 8, marginBottom: 12 }}>{error}</p>
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => {
-                    bootstrapStarted.current = false;
-                    setError("");
-                    setBootstrapRetry((r) => r + 1);
-                  }}
-                >
-                  Retry
-                </button>
-              </>
-            ) : (
-              <>
-                <p>Initializing your workspace&hellip;</p>
-                <div className="spinner" />
-              </>
-            )}
+            <p>{authMode === "login" ? "Sign in to collaborate." : "Create an account for collaboration."}</p>
+            {error ? <p className="error" style={{ marginTop: 8, marginBottom: 4 }}>{error}</p> : null}
+            <div style={{ display: "grid", gap: 8, width: "100%" }}>
+              <input
+                type="text"
+                placeholder="Username"
+                value={authUsernameInput}
+                onChange={(e) => setAuthUsernameInput(e.target.value)}
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={authPasswordInput}
+                onChange={(e) => setAuthPasswordInput(e.target.value)}
+              />
+              {authMode === "register" ? (
+                <input
+                  type="password"
+                  placeholder="Confirm password"
+                  value={authPasswordConfirmInput}
+                  onChange={(e) => setAuthPasswordConfirmInput(e.target.value)}
+                />
+              ) : null}
+              <button
+                type="button"
+                className="primary-button"
+                disabled={authBootstrapLoading}
+                onClick={() => void submitAuth()}
+              >
+                {authBootstrapLoading ? "Please wait..." : authMode === "login" ? "Sign in" : "Create account"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setAuthMode((m) => (m === "login" ? "register" : "login"));
+                  setError("");
+                }}
+              >
+                {authMode === "login" ? "Need an account? Register" : "Already have an account? Sign in"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={authBootstrapLoading}
+                onClick={() => void continueAsGuest()}
+              >
+                Continue as guest
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -608,11 +769,6 @@ function App() {
   return (
     <div className={`app-shell ${darkMode ? "" : "theme-light"}`}>
       <aside className="side-rail">
-        <div className="rail-logo">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2">
-            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-          </svg>
-        </div>
         {railItems.map((item) => (
           <button
             key={item.id}
@@ -628,13 +784,22 @@ function App() {
       <section className="content-area">
         <header className="topbar">
           <div className="topbar-brand">
+            <div className="topbar-brand-row">
+              <img src="/logo.png" alt="" className="topbar-logo" />
             <span className="topbar-title">Supply Chain Command</span>
-            <span className="topbar-sub">Monte Carlo · AI Planning · Risk Analysis</span>
+            </div>
+            <span className="topbar-sub">
+              {currentBrewery ? `${currentBrewery.name} · ` : ""}
+              Monte Carlo · AI Planning · Risk Analysis
+            </span>
           </div>
           <div className="topbar-right">
-            <span className="status-pill">LIVE</span>
+            <span className="user-chip">@{username || "guest"}</span>
             <button className="secondary-button" onClick={() => setDarkMode((v) => !v)}>
               {darkMode ? "Light" : "Dark"}
+            </button>
+            <button className="secondary-button" onClick={clearSession}>
+              Sign out
             </button>
           </div>
         </header>
@@ -764,6 +929,38 @@ function App() {
                   onSendMessage={(msg) => void sendSimChat(msg)}
                 />
               ) : null}
+
+              {results && currentWorkspace ? (
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    style={{ fontSize: "0.85rem" }}
+                    onClick={() => {
+                      const config = {
+                        strategy,
+                        customOrderQuantity,
+                        simulations,
+                        initialCash,
+                        demandStdDev,
+                        weeklyFixedCost,
+                        bankruptcyThreshold,
+                        salePrice,
+                        aiModel,
+                      };
+                      authFetch(`${API_BASE_URL}/workspaces/${currentWorkspace.id}/state`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ config, results }),
+                      }).then((r) => {
+                        if (r.ok) pushLog({ action: "workspace.push", request: { workspace: currentWorkspace.name }, level: "info" });
+                      });
+                    }}
+                  >
+                    Push results to &quot;{currentWorkspace.name}&quot;
+                  </button>
+                </div>
+              ) : null}
             </>
           ) : null}
 
@@ -785,13 +982,30 @@ function App() {
             />
           ) : null}
 
+          {activePage === "collaborate" ? (
+            <CollaboratePage
+              apiBaseUrl={API_BASE_URL}
+              authFetch={authFetch}
+              currentWorkspace={currentWorkspace}
+              onCurrentWorkspaceChange={setCurrentWorkspace}
+              onLoadWorkspaceState={loadWorkspaceState}
+            />
+          ) : null}
+
+          {activePage === "breweries" ? (
+            <BreweriesPage
+              apiBaseUrl={API_BASE_URL}
+              authFetch={authFetch}
+              breweries={breweries}
+              onBreweriesChange={setBreweries}
+              currentBrewery={currentBrewery}
+              onCurrentBreweryChange={setCurrentBrewery}
+            />
+          ) : null}
+
           {activePage === "settings" ? (
             <SettingsPage authToken={authToken} apiBaseUrl={API_BASE_URL} onAuthError={() => {
-              localStorage.removeItem("auth_token");
-              localStorage.removeItem("auth_user");
-              bootstrapStarted.current = false;
-              setAuthToken(null);
-              setBootstrapRetry((r) => r + 1);
+              clearSession();
             }} />
           ) : null}
         </div>
