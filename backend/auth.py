@@ -2,6 +2,7 @@ import hashlib
 import os
 import secrets
 import sqlite3
+import sys
 from datetime import datetime
 
 
@@ -9,9 +10,24 @@ DB_PATH = os.getenv("AUTH_DB_PATH", "auth.db")
 
 
 def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    global DB_PATH
+    parent = os.path.dirname(DB_PATH)
+    if parent:
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except OSError:
+            pass
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except (sqlite3.OperationalError, OSError) as e:
+        fallback = "/tmp/team28_auth.db"
+        if os.path.normpath(DB_PATH) != os.path.normpath(fallback):
+            print(f"Warning: DB not writable ({e}), using {fallback}", file=sys.stderr)
+            DB_PATH = fallback
+            return _get_conn()
+        raise
 
 
 def init_auth_db() -> None:
@@ -34,6 +50,14 @@ def init_auth_db() -> None:
                 user_id INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_keys (
+                key_name TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             )
             """
         )
@@ -95,3 +119,27 @@ def validate_token(token: str) -> str | None:
         if row is None:
             return None
         return str(row["username"])
+
+
+def get_api_key(key_name: str) -> str | None:
+    """Get API key from DB (app-configured keys). Returns None if not set."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT value FROM api_keys WHERE key_name = ?",
+            (key_name,),
+        ).fetchone()
+        return str(row["value"]).strip() if row and row["value"] else None
+
+
+def set_api_key(key_name: str, value: str) -> None:
+    """Store or clear an API key. Use empty string to remove."""
+    with _get_conn() as conn:
+        v = value.strip()
+        if v:
+            conn.execute(
+                "INSERT INTO api_keys(key_name, value) VALUES (?, ?) ON CONFLICT(key_name) DO UPDATE SET value = ?",
+                (key_name, v, v),
+            )
+        else:
+            conn.execute("DELETE FROM api_keys WHERE key_name = ?", (key_name,))
+        conn.commit()

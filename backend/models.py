@@ -97,6 +97,12 @@ class AIAdvisorResponse(BaseModel):
     compact_metrics: CompactSimulationResponse
 
 
+class AIAdvisorDistributionResponse(BaseModel):
+    """AI-generated profit distribution (AI's own 'Monte Carlo' style analysis)."""
+    model: str
+    profits: List[float]
+
+
 class AILogEntry(BaseModel):
     timestamp: str
     action: str
@@ -179,6 +185,19 @@ class AuthLoginRequest(BaseModel):
 class AuthResponse(BaseModel):
     token: str
     username: str
+
+
+class AIKeysResponse(BaseModel):
+    """Masked API key status for display in Settings."""
+    anthropic_set: bool = False
+    anthropic_masked: str = ""
+    openai_set: bool = False
+    openai_masked: str = ""
+
+
+class AIKeysUpdateRequest(BaseModel):
+    anthropic: Optional[str] = Field(default=None, description="Claude API key; omit or empty to leave unchanged")
+    openai: Optional[str] = Field(default=None, description="OpenAI API key; omit or empty to leave unchanged")
 
 
 class ProcessFileRequest(BaseModel):

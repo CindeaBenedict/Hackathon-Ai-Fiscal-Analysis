@@ -10,10 +10,10 @@ Monte Carlo supply chain simulation with AI advisor.
 
 | Tool | What it does | Download |
 |---|---|---|
-| **Docker Desktop** | Runs the app in containers | https://www.docker.com/products/docker-desktop |
-| **Ollama** | Runs the AI locally (free) | https://ollama.com |
+| **Docker** | Runs the app in containers. On Linux: CLI only (`docker` + `docker compose`). On Mac/Windows: Docker Desktop. | [Linux](https://docs.docker.com/engine/install/) · [Docker Desktop](https://www.docker.com/products/docker-desktop) |
+| **Ollama** | Runs the AI locally (free). On this project it runs inside Docker — no separate install. | [ollama.com](https://ollama.com) (only if not using Docker) |
 
-Both are free, one-click installers.
+**Linux one-liner:** from the repo run `./setup-and-start.sh` to install Docker (apt) and start the app. No GUI required.
 
 ### 2 — Start the app
 
@@ -50,7 +50,7 @@ That's it. The script will:
 ## Troubleshooting
 
 **App doesn't start**
-→ Make sure Docker Desktop is running (look for the whale icon in your menu bar)
+→ Make sure Docker is running. On Linux: `sudo systemctl start docker`
 
 **AI says "Could not reach Ollama"**
 → Run `ollama serve` in a terminal, or restart your computer

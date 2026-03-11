@@ -3,6 +3,7 @@ import {
   CategoryScale,
   Chart as ChartJS,
   Filler,
+  Legend,
   LinearScale,
   LineElement,
   PointElement,
@@ -20,11 +21,13 @@ ChartJS.register(
   Title,
   Tooltip,
   Filler,
+  Legend,
 );
 
 type SimulationChartProps = {
   inventoryTraces: number[][];
   profits: number[];
+  aiProfits?: number[] | null;
 };
 
 const CHART_COLORS = {
@@ -54,14 +57,14 @@ const BASE_OPTIONS = {
 };
 
 // ── Histogram helper ──────────────────────────────────────────────────────────
-function buildHistogram(values: number[], bins = 22) {
-  if (!values.length) return { labels: [], counts: [], colors: [] };
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+function buildHistogram(values: number[], bins = 22, binEdges?: { min: number; max: number }) {
+  if (!values.length) return { labels: [] as string[], counts: [] as number[], colors: [] as string[] };
+  const min = binEdges ? binEdges.min : Math.min(...values);
+  const max = binEdges ? binEdges.max : Math.max(...values);
   const binSize = (max - min) / bins || 1;
   const counts = Array(bins).fill(0);
   for (const v of values) {
-    const idx = Math.min(Math.floor((v - min) / binSize), bins - 1);
+    const idx = Math.min(Math.max(0, Math.floor((v - min) / binSize)), bins - 1);
     counts[idx]++;
   }
   const labels = counts.map((_, i) => {
@@ -76,7 +79,7 @@ function buildHistogram(values: number[], bins = 22) {
   return { labels, counts, colors };
 }
 
-export default function SimulationChart({ inventoryTraces, profits }: SimulationChartProps) {
+export default function SimulationChart({ inventoryTraces, profits, aiProfits }: SimulationChartProps) {
   const traces = inventoryTraces.slice(0, 12);
   const weekLabels =
     traces.length > 0
@@ -102,18 +105,40 @@ export default function SimulationChart({ inventoryTraces, profits }: Simulation
     })),
   };
 
-  const { labels: hLabels, counts: hCounts, colors: hColors } = buildHistogram(profits);
+  const bins = 22;
+  const hasAi = aiProfits && aiProfits.length > 0;
+  const combinedMin = hasAi
+    ? Math.min(Math.min(...profits), Math.min(...aiProfits))
+    : Math.min(...profits);
+  const combinedMax = hasAi
+    ? Math.max(Math.max(...profits), Math.max(...aiProfits))
+    : Math.max(...profits);
+  const binEdges = { min: combinedMin, max: combinedMax };
+
+  const { labels: hLabels, counts: hCounts, colors: hColors } = buildHistogram(profits, bins, binEdges);
   const histData = {
     labels: hLabels,
     datasets: [
       {
-        label: "Runs",
+        label: "Monte Carlo (math)",
         data: hCounts,
         backgroundColor: hColors,
         borderRadius: 2,
-        barPercentage: 0.95,
-        categoryPercentage: 1.0,
+        barPercentage: hasAi ? 0.8 : 0.95,
+        categoryPercentage: hasAi ? 0.8 : 1.0,
       },
+      ...(hasAi
+        ? [
+            {
+              label: "AI Monte Carlo",
+              data: buildHistogram(aiProfits, bins, binEdges).counts,
+              backgroundColor: "rgba(34,197,94,0.6)",
+              borderRadius: 2,
+              barPercentage: 0.8,
+              categoryPercentage: 0.8,
+            },
+          ]
+        : []),
     ],
   };
 
@@ -138,38 +163,58 @@ export default function SimulationChart({ inventoryTraces, profits }: Simulation
   return (
     <section className="panel">
       <h2>Simulation Outputs</h2>
+      <p style={{ margin: "0 0 14px", fontSize: "0.72rem", color: "var(--text-2)" }}>
+        <span style={{ color: "#60a5fa", fontWeight: 600 }}>■ Monte Carlo (math)</span>
+        {hasAi ? (
+          <>
+            {" · "}
+            <span style={{ color: "#22c55e", fontWeight: 600 }}>■ AI distribution</span>
+          </>
+        ) : null}
+      </p>
       <div style={{ display: "grid", gap: 14 }}>
-        {/* Inventory traces */}
+        {/* Monte Carlo: inventory traces (blue theme) */}
         <div style={{
-          background: "var(--s1)", border: "1px solid var(--border)",
-          borderRadius: "var(--r-md)", padding: "14px 16px",
+          background: "var(--s1)",
+          border: "1px solid rgba(59,130,246,0.22)",
+          borderLeft: "4px solid #3b82f6",
+          borderRadius: "var(--r-md)",
+          padding: "14px 16px",
         }}>
           <p style={{ margin: "0 0 10px", fontSize: "0.72rem", fontWeight: 700,
-            textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--text-2)" }}>
-            Inventory over 12 weeks — sample of {traces.length} runs
+            textTransform: "uppercase", letterSpacing: "0.07em", color: "#60a5fa" }}>
+            Monte Carlo — Inventory over 12 weeks (sample of {traces.length} runs)
           </p>
-          {/* height must be set on the wrapper, not the chart, for maintainAspectRatio:false */}
           <div style={{ height: 200, width: "100%", position: "relative" }}>
             <Line data={inventoryData} options={BASE_OPTIONS} />
           </div>
         </div>
 
-        {/* Profit histogram */}
+        {/* Profit histogram — math (blue) + AI (green) when available */}
         <div style={{
-          background: "var(--s1)", border: "1px solid var(--border)",
-          borderRadius: "var(--r-md)", padding: "14px 16px",
+          background: "var(--s1)",
+          border: "1px solid rgba(59,130,246,0.22)",
+          borderLeft: "4px solid #3b82f6",
+          borderRadius: "var(--r-md)",
+          padding: "14px 16px",
         }}>
           <p style={{ margin: "0 0 10px", fontSize: "0.72rem", fontWeight: 700,
-            textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--text-2)" }}>
-            Profit distribution — {profits.length.toLocaleString()} runs &nbsp;·&nbsp;
-            <span style={{ color: "#22c55e" }}>■</span> profit &nbsp;
-            <span style={{ color: "#ef4444" }}>■</span> loss
+            textTransform: "uppercase", letterSpacing: "0.07em", color: "#60a5fa" }}>
+            Profit distribution
+            {hasAi ? ` — math (${profits.length.toLocaleString()}) + AI (${aiProfits.length})` : ` (${profits.length.toLocaleString()} runs)`}
+            &nbsp;·&nbsp;
+            <span style={{ color: "#3b82f6" }}>■</span> math
+            {hasAi ? <><span style={{ color: "#22c55e" }}> ■</span> AI</> : null}
           </p>
           <div style={{ height: 200, width: "100%", position: "relative" }}>
             <Bar
               data={histData}
               options={{
                 ...BASE_OPTIONS,
+                plugins: {
+                  ...BASE_OPTIONS.plugins,
+                  legend: { display: Boolean(hasAi) },
+                },
                 scales: {
                   ...BASE_OPTIONS.scales,
                   x: {

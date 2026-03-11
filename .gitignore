@@ -40,6 +40,9 @@ target/
 .DS_Store
 Thumbs.db
 
+# Local Docker wrapper (setup-and-start.sh)
+.docker-wrap/
+
 # Secrets & environment
 .env
 .env.local

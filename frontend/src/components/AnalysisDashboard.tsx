@@ -30,6 +30,9 @@ export type SimChatMessage = {
 type Props = {
   results: SimulationResults;
   chatMessages: SimChatMessage[];
+  aiSummary: string | null;
+  aiProfits: number[] | null;
+  analysisMode: "monte_carlo_only" | "monte_carlo_and_ai";
   isAiLoading: boolean;
   aiModel: string;
   onSendMessage: (text: string) => void;
@@ -212,6 +215,9 @@ const QUICK_REPLIES = [
 export default function AnalysisDashboard({
   results: r,
   chatMessages,
+  aiSummary,
+  aiProfits,
+  analysisMode,
   isAiLoading,
   aiModel,
   onSendMessage,
@@ -348,7 +354,7 @@ export default function AnalysisDashboard({
             </span>
           </div>
 
-          {/* Chat history */}
+          {/* Chat history — AI analysis appears here once as assistant message */}
           <div
             style={{
               flex: 1,
@@ -372,10 +378,14 @@ export default function AnalysisDashboard({
                 }}
               >
                 <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--text-2)" }}>
-                  AI advisor will analyze results here
+                  {analysisMode === "monte_carlo_only"
+                    ? "Run with ‘Monte Carlo + AI’ to get AI analysis here"
+                    : "AI advisor will analyze results here"}
                 </p>
                 <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--text-3)" }}>
-                  Auto-starts after simulation
+                  {analysisMode === "monte_carlo_and_ai"
+                    ? "Auto-starts after simulation"
+                    : "Select ‘Monte Carlo + AI’ in controls and run again"}
                 </p>
               </div>
             ) : (
@@ -493,10 +503,11 @@ export default function AnalysisDashboard({
         </section>
       </div>
 
-      {/* ── Charts ───────────────────────────────────────────────────────── */}
+      {/* ── Charts (Monte Carlo = blue, AI = green when present) ───────────── */}
       <SimulationChart
         inventoryTraces={r.inventory_traces}
         profits={r.profits}
+        aiProfits={aiProfits}
       />
     </div>
   );

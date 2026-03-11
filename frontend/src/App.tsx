@@ -3,8 +3,9 @@ import DataChatPage, { ChatMessage } from "./components/DataChatPage";
 import DataUploadPage, { DataFileSummary } from "./components/DataUploadPage";
 import LogsPage, { BackendAILog, FrontendLogEntry } from "./components/LogsPage";
 import AnalysisDashboard, { SimChatMessage, SimulationResults } from "./components/AnalysisDashboard";
-import StrategySelector, { Strategy } from "./components/StrategySelector";
+import StrategySelector, { AnalysisMode, Strategy } from "./components/StrategySelector";
 import TheoryPage, { TheoryReport } from "./components/TheoryPage";
+import SettingsPage from "./components/SettingsPage";
 
 type SimulationResponse = SimulationResults;
 
@@ -31,10 +32,11 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 function App() {
   const [activePage, setActivePage] = useState<
-    "dashboard" | "logs" | "dataUpload" | "dataChat" | "theory"
+    "dashboard" | "logs" | "dataUpload" | "dataChat" | "theory" | "settings"
   >("dashboard");
   const [darkMode, setDarkMode] = useState(true);
-  const [strategy, setStrategy] = useState<Strategy>("balanced");
+  const [strategy, setStrategy] = useState<Strategy>("custom");
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("monte_carlo_and_ai");
   const [customOrderQuantity, setCustomOrderQuantity] = useState<number>(120);
   const [simulations, setSimulations] = useState<number>(500);
   const [initialCash, setInitialCash] = useState<number>(5000);
@@ -48,6 +50,8 @@ function App() {
   const [isTheoryLoading, setIsTheoryLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [results, setResults] = useState<SimulationResponse | null>(null);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [aiProfits, setAiProfits] = useState<number[] | null>(null);
   const [simChat, setSimChat] = useState<SimChatMessage[]>([]);
   const [logs, setLogs] = useState<FrontendLogEntry[]>([]);
   const [backendLogs, setBackendLogs] = useState<BackendAILog[]>([]);
@@ -64,7 +68,7 @@ function App() {
     Record<string, { inferred_mapping: Record<string, unknown>; ai_notes?: string }>
   >({});
   const railItems: Array<{
-    id: "dashboard" | "logs" | "dataUpload" | "dataChat" | "theory";
+    id: "dashboard" | "logs" | "dataUpload" | "dataChat" | "theory" | "settings";
     title: string;
     icon: React.ReactNode;
   }> = [
@@ -118,6 +122,16 @@ function App() {
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
           <path d="M6 3h8L11 10l3 7H6l3-7L6 3z" />
+        </svg>
+      ),
+    },
+    {
+      id: "settings",
+      title: "Settings",
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+          <circle cx="10" cy="10" r="2.5" />
+          <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.93 4.93l1.41 1.41M13.66 13.66l1.41 1.41M4.93 15.07l1.41-1.41M13.66 6.34l1.41-1.41" />
         </svg>
       ),
     },
@@ -200,7 +214,9 @@ function App() {
 
       const data: SimulationResponse = await response.json();
       setResults(data);
-      setSimChat([]);  // clear previous chat
+      setSimChat([]);
+      setAiSummary(null);
+      setAiProfits(null);
       pushLog({
         action: "simulation.completed",
         request: requestPayload,
@@ -214,15 +230,76 @@ function App() {
         },
         level: "success",
       });
-      // Auto-send initial diagnosis to sim chat
-      const bkPct = data.bankruptcy_probability * 100;
-      const autoMsg =
-        bkPct > 30
-          ? `Bankruptcy hit ${bkPct.toFixed(1)}% of runs. Explain the exact math behind why the business fails so often — break it down week by week.`
-          : bkPct > 12
-          ? `Bankruptcy affected ${bkPct.toFixed(1)}% of runs with an average profit of $${Math.round(data.avg_profit).toLocaleString()}. Explain what's driving the risk and what's holding the good runs together.`
-          : `The simulation looks healthy with only ${bkPct.toFixed(1)}% bankruptcy and average profit $${Math.round(data.avg_profit).toLocaleString()}. Explain the math that makes this strategy work and what could still go wrong.`;
-      void sendSimChat(autoMsg, data);
+
+      // When "Monte Carlo + AI": run AI advisor and show summary (color-coded in chart)
+      if (analysisMode !== "monte_carlo_and_ai") {
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        setIsAiLoading(true);
+        const advisorPayload = {
+          ...requestPayload,
+          model: aiModel,
+        };
+        const advisorRes = await authFetch(`${API_BASE_URL}/ai/advisor`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(advisorPayload),
+        });
+        if (advisorRes.ok) {
+          const advisorData = await advisorRes.json();
+          const summary = advisorData.summary || "No summary generated.";
+          setAiSummary(summary);
+          setSimChat([
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: summary,
+            },
+          ]);
+          // AI Monte Carlo: get AI's own profit distribution to plot alongside math
+          try {
+            const distRes = await authFetch(`${API_BASE_URL}/ai/advisor-distribution`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(advisorPayload),
+            });
+            if (distRes.ok) {
+              const distData = await distRes.json();
+              setAiProfits(distData.profits ?? null);
+            } else {
+              setAiProfits(null);
+            }
+          } catch {
+            setAiProfits(null);
+          }
+        } else {
+          const errText = await advisorRes.text();
+          setAiSummary(null);
+          setAiProfits(null);
+          setSimChat([
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `AI advisor could not run: ${errText || advisorRes.status}. You can still ask questions in the chat.`,
+            },
+          ]);
+        }
+      } catch (advisorErr) {
+        setAiSummary(null);
+        setAiProfits(null);
+        setSimChat([
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `AI advisor unavailable: ${advisorErr instanceof Error ? advisorErr.message : "network error"}. You can still ask questions below.`,
+          },
+        ]);
+      } finally {
+        setIsAiLoading(false);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error.");
     } finally {
@@ -597,6 +674,7 @@ function App() {
             <>
               <StrategySelector
                 strategy={strategy}
+                analysisMode={analysisMode}
                 customOrderQuantity={customOrderQuantity}
                 simulations={simulations}
                 initialCash={initialCash}
@@ -606,6 +684,7 @@ function App() {
                 salePrice={salePrice}
                 aiModel={aiModel}
                 onStrategyChange={setStrategy}
+                onAnalysisModeChange={setAnalysisMode}
                 onCustomOrderQuantityChange={setCustomOrderQuantity}
                 onSimulationsChange={setSimulations}
                 onInitialCashChange={setInitialCash}
@@ -622,6 +701,9 @@ function App() {
                 <AnalysisDashboard
                   results={results}
                   chatMessages={simChat}
+                  aiSummary={aiSummary}
+                  aiProfits={aiProfits}
+                  analysisMode={analysisMode}
                   isAiLoading={isAiLoading}
                   aiModel={aiModel}
                   onSendMessage={(msg) => void sendSimChat(msg)}
@@ -666,6 +748,10 @@ function App() {
               onGenerate={generateTheoryReport}
               isLoading={isTheoryLoading}
             />
+          ) : null}
+
+          {activePage === "settings" ? (
+            <SettingsPage authToken={authToken} apiBaseUrl={API_BASE_URL} />
           ) : null}
         </div>
       </section>

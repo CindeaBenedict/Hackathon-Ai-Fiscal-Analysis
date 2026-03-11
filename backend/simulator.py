@@ -1,3 +1,4 @@
+import hashlib
 import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
@@ -166,6 +167,15 @@ def run_monte_carlo(
     config: SimulationConfig | None = None,
 ) -> Dict:
     simulation_config = config or SimulationConfig()
+    # Deterministic seed so same inputs always give same results
+    param_str = (
+        f"{strategy.value}:{simulations}:{custom_quantity or 0}:"
+        f"{simulation_config.baseline_demand}:{simulation_config.demand_std_dev}:"
+        f"{simulation_config.weekly_fixed_cost}:{simulation_config.initial_cash}"
+    )
+    seed = int(hashlib.md5(param_str.encode()).hexdigest()[:8], 16)
+    random.seed(seed)
+
     run_results: List[Dict] = [
         simulate_single_run(
             strategy=strategy,
@@ -208,6 +218,15 @@ def run_monte_carlo_stable(
     keep sampling until confidence interval widths become stable.
     """
     simulation_config = config or SimulationConfig()
+    # Deterministic seed so same inputs always give same results
+    param_str = (
+        f"{strategy.value}:{simulations}:{custom_quantity or 0}:"
+        f"{simulation_config.baseline_demand}:{simulation_config.demand_std_dev}:"
+        f"{simulation_config.weekly_fixed_cost}:{simulation_config.initial_cash}"
+    )
+    seed = int(hashlib.md5(param_str.encode()).hexdigest()[:8], 16)
+    random.seed(seed)
+
     batch_size = max(100, simulations)
     run_results: List[Dict] = []
 

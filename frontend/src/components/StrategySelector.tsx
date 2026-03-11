@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 
 export type Strategy = "conservative" | "balanced" | "aggressive" | "custom";
 
+export type AnalysisMode = "monte_carlo_only" | "monte_carlo_and_ai";
+
 // ── Model presets ─────────────────────────────────────────────────────────────
 
 type ModelPreset = {
@@ -15,8 +17,9 @@ const MODEL_PRESETS: ModelPreset[] = [
   { provider: "ollama", model: "llama3.2:1b",               label: "Llama 3.2 1B",     note: "Fast · local · default" },
   { provider: "ollama", model: "llama3",                    label: "Llama 3 8B",       note: "Better quality · local" },
   { provider: "ollama", model: "mistral",                   label: "Mistral 7B",       note: "Good reasoning · local" },
-  { provider: "claude", model: "claude-3-haiku-20240307",   label: "Claude Haiku",     note: "Fast · API key needed" },
-  { provider: "claude", model: "claude-3-5-sonnet-20241022",label: "Claude Sonnet 3.5",note: "Best quality · API key" },
+  { provider: "claude", model: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", note: "Fast · API key needed" },
+  { provider: "claude", model: "claude-sonnet-4-6",         label: "Claude Sonnet 4.6",note: "Best balance · API key" },
+  { provider: "claude", model: "claude-opus-4-6",           label: "Claude Opus 4.6",  note: "Best quality · API key" },
   { provider: "openai", model: "gpt-4o-mini",               label: "GPT-4o Mini",      note: "Fast · API key needed" },
   { provider: "openai", model: "gpt-4o",                    label: "GPT-4o",           note: "Best quality · API key" },
 ];
@@ -41,6 +44,7 @@ type ProviderStatus = {
 
 type StrategySelectorProps = {
   strategy: Strategy;
+  analysisMode: AnalysisMode;
   customOrderQuantity: number;
   simulations: number;
   initialCash: number;
@@ -50,6 +54,7 @@ type StrategySelectorProps = {
   salePrice: number;
   aiModel: string;
   onStrategyChange: (value: Strategy) => void;
+  onAnalysisModeChange: (value: AnalysisMode) => void;
   onCustomOrderQuantityChange: (value: number) => void;
   onSimulationsChange: (value: number) => void;
   onInitialCashChange: (value: number) => void;
@@ -66,6 +71,7 @@ type StrategySelectorProps = {
 
 function StrategySelector({
   strategy,
+  analysisMode,
   customOrderQuantity,
   simulations,
   initialCash,
@@ -75,6 +81,7 @@ function StrategySelector({
   salePrice,
   aiModel,
   onStrategyChange,
+  onAnalysisModeChange,
   onCustomOrderQuantityChange,
   onSimulationsChange,
   onInitialCashChange,
@@ -131,6 +138,17 @@ function StrategySelector({
 
       {/* ── Simulation parameters ─────────────────────────────────────── */}
       <div className="controls-grid">
+        <label>
+          Analysis
+          <select
+            value={analysisMode}
+            onChange={(e) => onAnalysisModeChange(e.target.value as AnalysisMode)}
+            title={analysisMode === "monte_carlo_and_ai" ? "Runs Monte Carlo + AI advisor" : "Runs Monte Carlo only"}
+          >
+            <option value="monte_carlo_and_ai">Monte Carlo + AI (both, color-coded)</option>
+            <option value="monte_carlo_only">Monte Carlo only (math)</option>
+          </select>
+        </label>
         <label>
           Strategy
           <select value={strategy} onChange={(e) => onStrategyChange(e.target.value as Strategy)}>
@@ -313,7 +331,9 @@ function StrategySelector({
           {isLoading ? "Running…" : "Run Simulation"}
         </button>
         <span style={{ fontSize: "0.73rem", color: "var(--text-2)" }}>
-          AI advisor starts automatically after simulation
+          {analysisMode === "monte_carlo_and_ai"
+            ? "Monte Carlo + AI — both shown and color-coded below"
+            : "Math only — no AI analysis"}
         </span>
       </div>
     </section>

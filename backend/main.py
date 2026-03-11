@@ -10,8 +10,16 @@ import uuid
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from ai_agent import OllamaUnavailableError, extract_first_int, generate_text, provider_status, pull_model
-from auth import init_auth_db, login_user, register_user, validate_token
+from ai_agent import (
+    OllamaUnavailableError,
+    extract_first_int,
+    extract_profit_list,
+    extract_profits_from_json,
+    generate_text,
+    provider_status,
+    pull_model,
+)
+from auth import get_api_key, init_auth_db, login_user, register_user, set_api_key, validate_token
 from data_ingest import (
     parse_csv_bytes,
     parse_excel_bytes,
@@ -21,6 +29,9 @@ from data_ingest import (
 from models import (
     AIAdvisorRequest,
     AIAdvisorResponse,
+    AIAdvisorDistributionResponse,
+    AIKeysResponse,
+    AIKeysUpdateRequest,
     AuthLoginRequest,
     AuthRegisterRequest,
     AuthResponse,
@@ -84,8 +95,17 @@ def _auto_pull_model() -> None:
 
 @app.on_event("startup")
 def startup_event() -> None:
-    init_auth_db()
-    threading.Thread(target=_auto_pull_model, daemon=True).start()
+    import sys
+    import traceback
+    print("Backend startup: initializing auth DB...", file=sys.stderr, flush=True)
+    try:
+        init_auth_db()
+        print("Backend startup: auth DB OK, starting model pull thread.", file=sys.stderr, flush=True)
+        threading.Thread(target=_auto_pull_model, daemon=True).start()
+    except Exception as e:
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
+        raise RuntimeError(f"Startup failed: {e}") from e
 
 
 @app.get("/health")
@@ -99,6 +119,12 @@ def ai_status() -> dict:
     return provider_status()
 
 
+def _mask_key(key: str | None) -> str:
+    if not key or len(key) < 8:
+        return ""
+    return key[:4] + "…" + key[-4:] if len(key) > 8 else "****"
+
+
 def require_auth(authorization: str | None = Header(default=None)) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token.")
@@ -107,6 +133,32 @@ def require_auth(authorization: str | None = Header(default=None)) -> str:
     if username is None:
         raise HTTPException(status_code=401, detail="Invalid token.")
     return username
+
+
+@app.get("/ai/keys", response_model=AIKeysResponse)
+def get_ai_keys() -> AIKeysResponse:
+    """Return masked API key status (for Settings UI). No auth required to read status."""
+    ak = get_api_key("ANTHROPIC_API_KEY")
+    ok = get_api_key("OPENAI_API_KEY")
+    return AIKeysResponse(
+        anthropic_set=bool(ak),
+        anthropic_masked=_mask_key(ak) or "(not set)",
+        openai_set=bool(ok),
+        openai_masked=_mask_key(ok) or "(not set)",
+    )
+
+
+@app.put("/ai/keys", response_model=AIKeysResponse)
+def update_ai_keys(
+    body: AIKeysUpdateRequest,
+    _username: str = Depends(require_auth),
+) -> AIKeysResponse:
+    """Store Claude/OpenAI API keys from the app. Requires auth."""
+    if body.anthropic is not None:
+        set_api_key("ANTHROPIC_API_KEY", body.anthropic)
+    if body.openai is not None:
+        set_api_key("OPENAI_API_KEY", body.openai)
+    return get_ai_keys()
 
 
 def _config_from_request(payload: SimulationRequest) -> SimulationConfig:
@@ -138,11 +190,11 @@ def _add_ai_log(entry: AILogEntry) -> None:
         del AI_LOGS[MAX_AI_LOGS:]
 
 
-def _timed_ai_call(action: str, model: str, prompt: str) -> tuple[str | None, str | None, float]:
-    """Call Ollama, return (response_text, error_text, duration_ms)."""
+def _timed_ai_call(action: str, model: str, prompt: str, *, max_tokens: int = 1024) -> tuple[str | None, str | None, float]:
+    """Call AI, return (response_text, error_text, duration_ms)."""
     t0 = time.monotonic()
     try:
-        result = generate_text(prompt=prompt, model=model)
+        result = generate_text(prompt=prompt, model=model, max_tokens=max_tokens)
         duration_ms = (time.monotonic() - t0) * 1000
         _add_ai_log(AILogEntry(
             timestamp=datetime.utcnow().isoformat(),
@@ -369,6 +421,51 @@ Keep each bullet under 25 words.""".strip()
         summary=summary or "",
         compact_metrics=CompactSimulationResponse(**compact),
     )
+
+
+@app.post("/ai/advisor-distribution", response_model=AIAdvisorDistributionResponse)
+def ai_advisor_distribution(
+    payload: AIAdvisorRequest, _: str = Depends(require_auth)
+) -> AIAdvisorDistributionResponse:
+    """AI produces its own estimated profit distribution (plottable alongside math Monte Carlo)."""
+    if payload.strategy == Strategy.custom and payload.order_quantity is None:
+        raise HTTPException(
+            status_code=400,
+            detail="order_quantity is required when strategy is custom.",
+        )
+
+    compact = run_monte_carlo_compact(
+        strategy=payload.strategy,
+        simulations=payload.simulations,
+        custom_quantity=payload.order_quantity,
+        config=_config_from_request(payload),
+    )
+
+    bk_pct = compact["bankruptcy_probability"] * 100
+    prompt = f"""You are a supply chain analyst. Given the scenario and results below, output a JSON object with a list of profit values.
+
+SCENARIO: strategy={payload.strategy}, {payload.simulations} runs.
+MATH MODEL RESULTS: avg profit ${compact["avg_profit"]:,.0f}, P10 ${compact["profit_p10"]:,.0f}, P50 ${compact["profit_p50"]:,.0f}, P90 ${compact["profit_p90"]:,.0f}. Worst ${compact["worst_profit"]:,.0f}, best ${compact["best_profit"]:,.0f}. Bankruptcy {bk_pct:.1f}%.
+
+TASK: Reply with ONLY a single JSON object, no other text. The object must have one key "profits" whose value is an array of about 100 numbers. Each number is one possible profit outcome in dollars for this scenario. Use the math results as guidance but vary the values to form a distribution.
+
+Example format:
+{{"profits": [-1200, 3400, 2100, 500, -400, 2800, ...]}}""".strip()
+
+    raw, err, _ = _timed_ai_call("ai.advisor_distribution", payload.model, prompt, max_tokens=2048)
+    if err:
+        raise HTTPException(status_code=503, detail=err)
+
+    profits = extract_profits_from_json(raw or "")
+    if not profits:
+        profits = extract_profit_list(raw or "", max_values=250)
+    if len(profits) < 15:
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI did not return enough numbers (got {len(profits)}, need at least 15). Expected JSON like {{\"profits\": [ ... ]}}. Try a different model or try again.",
+        )
+
+    return AIAdvisorDistributionResponse(model=payload.model, profits=profits)
 
 
 @app.get("/ai/logs", response_model=list[AILogEntry])

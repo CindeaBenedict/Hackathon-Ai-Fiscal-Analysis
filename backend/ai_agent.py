@@ -1,10 +1,10 @@
 """
 AI provider abstraction — routes to Ollama, Claude, or OpenAI based on model name.
 
-  Model prefix    Provider          Needs env var
-  ─────────────   ────────────────  ──────────────────────
-  claude-*        Anthropic Claude  ANTHROPIC_API_KEY
-  gpt-* / o1-*    OpenAI            OPENAI_API_KEY
+  Model prefix    Provider          Needs env var or app setting
+  ─────────────   ────────────────  ─────────────────────────────
+  claude-*        Anthropic Claude  ANTHROPIC_API_KEY (env or Settings in app)
+  gpt-* / o1-*    OpenAI            OPENAI_API_KEY (env or Settings in app)
   (anything else) Ollama (local)    —  (runs in Docker)
 """
 import json
@@ -14,6 +14,30 @@ import urllib.error
 import urllib.request
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+
+def _get_anthropic_key() -> str:
+    """Prefer app-stored key, then env."""
+    try:
+        from auth import get_api_key
+        v = get_api_key("ANTHROPIC_API_KEY")
+        if v:
+            return v
+    except Exception:
+        pass
+    return os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+
+def _get_openai_key() -> str:
+    """Prefer app-stored key, then env."""
+    try:
+        from auth import get_api_key
+        v = get_api_key("OPENAI_API_KEY")
+        if v:
+            return v
+    except Exception:
+        pass
+    return os.getenv("OPENAI_API_KEY", "").strip()
 
 
 class OllamaUnavailableError(Exception):
@@ -58,16 +82,15 @@ def _generate_ollama(prompt: str, model: str) -> str:
 
 # ── Anthropic Claude ──────────────────────────────────────────────────────────
 
-def _generate_claude(prompt: str, model: str) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+def _generate_claude(prompt: str, model: str, max_tokens: int = 1024) -> str:
+    api_key = _get_anthropic_key()
     if not api_key:
         raise OllamaUnavailableError(
-            "ANTHROPIC_API_KEY is not set. "
-            "Add it to your .env file or docker-compose environment and restart."
+            "Claude API key is not set. Add it in Settings (or set ANTHROPIC_API_KEY in .env) and try again."
         )
     payload = json.dumps({
         "model": model,
-        "max_tokens": 1024,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
     req = urllib.request.Request(
@@ -93,17 +116,16 @@ def _generate_claude(prompt: str, model: str) -> str:
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
 
-def _generate_openai(prompt: str, model: str) -> str:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+def _generate_openai(prompt: str, model: str, max_tokens: int = 1024) -> str:
+    api_key = _get_openai_key()
     if not api_key:
         raise OllamaUnavailableError(
-            "OPENAI_API_KEY is not set. "
-            "Add it to your .env file or docker-compose environment and restart."
+            "OpenAI API key is not set. Add it in Settings (or set OPENAI_API_KEY in .env) and try again."
         )
     payload = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1024,
+        "max_tokens": max_tokens,
     }).encode()
     req = urllib.request.Request(
         url="https://api.openai.com/v1/chat/completions",
@@ -127,7 +149,7 @@ def _generate_openai(prompt: str, model: str) -> str:
 
 # ── Public interface ──────────────────────────────────────────────────────────
 
-def generate_text(prompt: str, model: str, system: str | None = None) -> str:
+def generate_text(prompt: str, model: str, system: str | None = None, max_tokens: int = 1024) -> str:
     """
     Generate text using the appropriate provider for the given model name.
     The `system` parameter is only used by Ollama (Claude/OpenAI handle it via the prompt).
@@ -137,9 +159,9 @@ def generate_text(prompt: str, model: str, system: str | None = None) -> str:
 
     provider = _provider(model)
     if provider == "claude":
-        return _generate_claude(prompt, model)
+        return _generate_claude(prompt, model, max_tokens=max_tokens)
     if provider == "openai":
-        return _generate_openai(prompt, model)
+        return _generate_openai(prompt, model, max_tokens=max_tokens)
     return _generate_ollama(prompt, model)
 
 
@@ -173,15 +195,15 @@ def provider_status() -> dict:
             "pulling": ollama_pulling,
         },
         "claude": {
-            "available": bool(os.getenv("ANTHROPIC_API_KEY", "").strip()),
+            "available": bool(_get_anthropic_key()),
             "models": [
-                "claude-3-haiku-20240307",
-                "claude-3-5-sonnet-20241022",
-                "claude-3-opus-20240229",
+                "claude-haiku-4-5-20251001",
+                "claude-sonnet-4-6",
+                "claude-opus-4-6",
             ],
         },
         "openai": {
-            "available": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+            "available": bool(_get_openai_key()),
             "models": ["gpt-4o-mini", "gpt-4o"],
         },
     }
@@ -206,3 +228,58 @@ def extract_first_int(text: str) -> int:
         return max(0, int(tagged.group(1)))
     matches = re.findall(r"-?\d+", text)
     return max(0, int(matches[-1])) if matches else 0
+
+
+def extract_profit_list(text: str, max_values: int = 250) -> list[float]:
+    """Parse a list of numbers from AI output (comma/newline/space separated)."""
+    tokens = re.split(r"[\s,\n]+", text)
+    result: list[float] = []
+    for t in tokens:
+        if len(result) >= max_values:
+            break
+        cleaned = t.strip().replace("$", "").replace(",", "")
+        if not cleaned:
+            continue
+        try:
+            result.append(float(cleaned))
+        except ValueError:
+            pass
+    return result[:max_values]
+
+
+def extract_profits_from_json(text: str, max_values: int = 250) -> list[float] | None:
+    """
+    Parse JSON from AI output and return the 'profits' array.
+    Expects object like {"profits": [100, -200, 300, ...]}.
+    Returns None if no valid JSON or no 'profits' key.
+    """
+    text = (text or "").strip()
+    start = text.find("{")
+    if start == -1:
+        return None
+    end = text.rfind("}")
+    if end == -1 or end <= start:
+        return None
+    try:
+        obj = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    raw = obj.get("profits")
+    if raw is None:
+        raw = obj.get("profit_values")
+    if not isinstance(raw, list):
+        return None
+    result: list[float] = []
+    for x in raw:
+        if len(result) >= max_values:
+            break
+        if isinstance(x, (int, float)):
+            result.append(float(x))
+        elif isinstance(x, str):
+            try:
+                result.append(float(x.replace("$", "").replace(",", "").strip()))
+            except ValueError:
+                pass
+    return result if result else None
