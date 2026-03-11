@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 import math
 import os
@@ -222,7 +222,7 @@ def _extract_session_token(authorization: str | None, cookie_token: str | None) 
 
 
 def _set_auth_cookie(response: Response, token: str) -> None:
-    expires_at = datetime.utcnow() + timedelta(hours=SESSION_TTL_HOURS)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=SESSION_TTL_HOURS)
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=token,
