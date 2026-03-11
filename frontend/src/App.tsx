@@ -77,6 +77,48 @@ function App() {
   const [authPasswordConfirmInput, setAuthPasswordConfirmInput] = useState("");
   const bootstrapStarted = useRef(false);
   const simulationAbortRef = useRef<AbortController | null>(null);
+
+  function buildWorkspaceConfig() {
+    return {
+      strategy,
+      customOrderQuantity,
+      simulations,
+      initialCash,
+      demandStdDev,
+      weeklyFixedCost,
+      bankruptcyThreshold,
+      salePrice,
+      aiModel,
+      breweries,
+      currentBreweryId: currentBrewery?.id ?? null,
+    };
+  }
+
+  function saveWorkspaceState(config: Record<string, unknown>, resultsData: Record<string, unknown> | null) {
+    if (!currentWorkspace) return;
+    authFetch(`${API_BASE_URL}/workspaces/${currentWorkspace.id}/state`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ config, results: resultsData }),
+    }).catch(() => {});
+  }
+
+  function handleBreweriesChange(nextBreweries: Brewery[]) {
+    setBreweries(nextBreweries);
+    if (currentWorkspace) {
+      const currentIdStillExists = currentBrewery ? nextBreweries.some((b) => b.id === currentBrewery.id) : false;
+      const nextCurrent = currentIdStillExists ? currentBrewery : null;
+      if (!currentIdStillExists) {
+        setCurrentBrewery(null);
+      }
+      const config = {
+        ...buildWorkspaceConfig(),
+        breweries: nextBreweries,
+        currentBreweryId: nextCurrent?.id ?? null,
+      };
+      saveWorkspaceState(config as Record<string, unknown>, results);
+    }
+  }
   const railItems: Array<{
     id: "dashboard" | "logs" | "theory" | "collaborate" | "breweries" | "settings";
     title: string;
@@ -193,13 +235,27 @@ function App() {
     localStorage.setItem("auth_user", data.username);
   }
 
-  function clearSession() {
+  function clearSessionLocal() {
     localStorage.removeItem("auth_token");
     localStorage.removeItem("auth_user");
     bootstrapStarted.current = false;
     setAuthToken(null);
     setUsername("");
     setCurrentWorkspace(null);
+  }
+
+  async function signOut() {
+    const token = authToken;
+    clearSessionLocal();
+    if (!token) return;
+    try {
+      await fetch(`${API_BASE_URL}/auth/logout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      // already signed out locally
+    }
   }
 
   async function submitAuth() {
@@ -246,24 +302,6 @@ function App() {
       setAuthPasswordConfirmInput("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed.");
-    } finally {
-      setAuthBootstrapLoading(false);
-    }
-  }
-
-  async function continueAsGuest() {
-    setError("");
-    setAuthBootstrapLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/guest`, { method: "POST" });
-      const text = await response.text();
-      if (!response.ok) {
-        throw new Error(text || `HTTP ${response.status}`);
-      }
-      const data = JSON.parse(text) as AuthResponse;
-      setSession(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start guest session.");
     } finally {
       setAuthBootstrapLoading(false);
     }
@@ -393,12 +431,10 @@ function App() {
           bankruptcyThreshold,
           salePrice,
           aiModel,
+          breweries,
+          currentBreweryId: currentBrewery?.id ?? null,
         };
-        authFetch(`${API_BASE_URL}/workspaces/${currentWorkspace.id}/state`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ config, results: data }),
-        }).catch(() => {});
+        saveWorkspaceState(config, data);
       }
 
       // Initial AI analysis from the math results (non-blocking)
@@ -694,6 +730,36 @@ function App() {
       if (typeof config.bankruptcyThreshold === "number") setBankruptcyThreshold(config.bankruptcyThreshold);
       if (typeof config.salePrice === "number") setSalePrice(config.salePrice);
       if (typeof config.aiModel === "string") setAiModel(config.aiModel);
+      if (Array.isArray(config.breweries)) {
+        const incoming = config.breweries.filter((b): b is Brewery => {
+          if (!b || typeof b !== "object") return false;
+          const x = b as Record<string, unknown>;
+          return typeof x.name === "string" && typeof x.lat === "number" && typeof x.lng === "number";
+        }).map((b, idx) => {
+          const x = b as unknown as Record<string, unknown>;
+          return {
+            id: typeof x.id === "number" ? x.id : idx + 1,
+            name: String(x.name ?? "Unnamed Brewery"),
+            lat: Number(x.lat ?? 0),
+            lng: Number(x.lng ?? 0),
+            address: String(x.address ?? ""),
+            description: String(x.description ?? ""),
+            avg_monthly_revenue: Number(x.avg_monthly_revenue ?? 0),
+            quality_score: Number(x.quality_score ?? 50),
+            efficiency_score: Number(x.efficiency_score ?? 50),
+            popularity_score: Number(x.popularity_score ?? 50),
+            sustainability_score: Number(x.sustainability_score ?? 50),
+            created_at: String(x.created_at ?? new Date().toISOString()),
+          } satisfies Brewery;
+        });
+        setBreweries(incoming);
+        if (typeof config.currentBreweryId === "number") {
+          const found = incoming.find((b) => b.id === config.currentBreweryId) ?? null;
+          setCurrentBrewery(found);
+        } else {
+          setCurrentBrewery(null);
+        }
+      }
     }
     if (resultsData && typeof resultsData === "object" && "avg_profit" in resultsData && "profits" in resultsData) {
       setResults(resultsData as SimulationResponse);
@@ -751,14 +817,6 @@ function App() {
               >
                 {authMode === "login" ? "Need an account? Register" : "Already have an account? Sign in"}
               </button>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={authBootstrapLoading}
-                onClick={() => void continueAsGuest()}
-              >
-                Continue as guest
-              </button>
             </div>
           </div>
         </div>
@@ -798,7 +856,7 @@ function App() {
             <button className="secondary-button" onClick={() => setDarkMode((v) => !v)}>
               {darkMode ? "Light" : "Dark"}
             </button>
-            <button className="secondary-button" onClick={clearSession}>
+            <button className="secondary-button" onClick={() => void signOut()}>
               Sign out
             </button>
           </div>
@@ -947,6 +1005,8 @@ function App() {
                         bankruptcyThreshold,
                         salePrice,
                         aiModel,
+                        breweries,
+                        currentBreweryId: currentBrewery?.id ?? null,
                       };
                       authFetch(`${API_BASE_URL}/workspaces/${currentWorkspace.id}/state`, {
                         method: "PUT",
@@ -989,6 +1049,9 @@ function App() {
               currentWorkspace={currentWorkspace}
               onCurrentWorkspaceChange={setCurrentWorkspace}
               onLoadWorkspaceState={loadWorkspaceState}
+              breweries={breweries}
+              currentBrewery={currentBrewery}
+              onSaveWorkspaceState={(config, resultsData) => saveWorkspaceState(config, resultsData)}
             />
           ) : null}
 
@@ -997,15 +1060,24 @@ function App() {
               apiBaseUrl={API_BASE_URL}
               authFetch={authFetch}
               breweries={breweries}
-              onBreweriesChange={setBreweries}
+              onBreweriesChange={handleBreweriesChange}
               currentBrewery={currentBrewery}
-              onCurrentBreweryChange={setCurrentBrewery}
+              onCurrentBreweryChange={(b) => {
+                setCurrentBrewery(b);
+                if (currentWorkspace) {
+                  const config = {
+                    ...buildWorkspaceConfig(),
+                    currentBreweryId: b?.id ?? null,
+                  };
+                  saveWorkspaceState(config as Record<string, unknown>, results);
+                }
+              }}
             />
           ) : null}
 
           {activePage === "settings" ? (
             <SettingsPage authToken={authToken} apiBaseUrl={API_BASE_URL} onAuthError={() => {
-              clearSession();
+              clearSessionLocal();
             }} />
           ) : null}
         </div>

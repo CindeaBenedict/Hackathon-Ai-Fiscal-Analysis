@@ -144,10 +144,9 @@ body {
   gap: 8px;
 }
 .topbar-logo {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   object-fit: contain;
-  border-radius: 6px;
 }
 .topbar-title { font-size: 0.92rem; font-weight: 700; letter-spacing: 0.01em; color: var(--text); }
 .topbar-sub   { font-size: 0.72rem; color: var(--text-2); }
@@ -276,7 +275,7 @@ label {
   letter-spacing: 0.02em;
 }
 
-input, select {
+input, select, textarea {
   border: 1px solid var(--border);
   border-radius: var(--r-xs);
   background: var(--s1);
@@ -287,11 +286,16 @@ input, select {
   transition: border-color 0.15s, box-shadow 0.15s;
   outline: none;
 }
-input:focus, select:focus {
+textarea {
+  resize: vertical;
+  min-height: 88px;
+  line-height: 1.45;
+}
+input:focus, select:focus, textarea:focus {
   border-color: rgba(59,130,246,0.5);
   box-shadow: 0 0 0 3px rgba(59,130,246,0.10);
 }
-input:disabled, select:disabled {
+input:disabled, select:disabled, textarea:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
@@ -528,9 +532,7 @@ select option { background: var(--s1); }
   box-shadow: 0 24px 60px rgba(0,0,0,0.45);
 }
 .splash-logo {
-  width: 52px; height: 52px;
-  background: var(--accent);
-  border-radius: 14px;
+  width: 64px; height: 64px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -732,6 +734,40 @@ select option { background: var(--s1); }
 }
 .brewery-item-btn strong { font-size: 0.9rem; }
 .brewery-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ─── Collaborate rich editor ─────────────────────────────────────────────── */
+.editor-toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.editor-toolbar .secondary-button {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+}
+.wordlike-editor {
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  background: var(--s1);
+  color: var(--text);
+  padding: 10px 12px;
+  min-height: 180px;
+  line-height: 1.55;
+  overflow: auto;
+}
+.wordlike-editor:focus {
+  outline: none;
+  border-color: rgba(59,130,246,0.5);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.10);
+}
+.wordlike-editor h1, .wordlike-editor h2, .wordlike-editor h3 {
+  margin: 0.45rem 0 0.35rem;
+}
+.wordlike-editor p, .wordlike-editor ul, .wordlike-editor ol {
+  margin: 0.3rem 0;
+  padding-left: 1rem;
+}
 
 @media (max-width: 768px) {
   .breweries-layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }

@@ -46,6 +46,14 @@ type BreweryCompareResult = {
   ai_summary: string;
 };
 
+type ComparisonDraft = {
+  avg_monthly_revenue: string;
+  quality_score: string;
+  efficiency_score: string;
+  popularity_score: string;
+  sustainability_score: string;
+};
+
 // Fix default marker icons in react-leaflet with bundlers
 const defaultIcon = L.icon({
   iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
@@ -96,6 +104,8 @@ export default function BreweriesPage({
   const [isCreating, setIsCreating] = useState(false);
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareResult, setCompareResult] = useState<BreweryCompareResult | null>(null);
+  const [comparisonDrafts, setComparisonDrafts] = useState<Record<number, ComparisonDraft>>({});
+  const [savingDraftId, setSavingDraftId] = useState<number | null>(null);
 
   const loadBreweries = useCallback(async () => {
     try {
@@ -111,6 +121,22 @@ export default function BreweriesPage({
   useEffect(() => {
     loadBreweries();
   }, [loadBreweries]);
+
+  useEffect(() => {
+    setComparisonDrafts((prev) => {
+      const next: Record<number, ComparisonDraft> = {};
+      for (const b of breweries) {
+        next[b.id] = prev[b.id] ?? {
+          avg_monthly_revenue: String(b.avg_monthly_revenue ?? 0),
+          quality_score: String(b.quality_score ?? 50),
+          efficiency_score: String(b.efficiency_score ?? 50),
+          popularity_score: String(b.popularity_score ?? 50),
+          sustainability_score: String(b.sustainability_score ?? 50),
+        };
+      }
+      return next;
+    });
+  }, [breweries]);
 
   const clearForm = () => {
     setFormName("");
@@ -278,6 +304,70 @@ export default function BreweriesPage({
       });
     } finally {
       setCompareLoading(false);
+    }
+  };
+
+  const setDraftField = (breweryId: number, field: keyof ComparisonDraft, value: string) => {
+    setComparisonDrafts((prev) => ({
+      ...prev,
+      [breweryId]: {
+        ...(prev[breweryId] ?? {
+          avg_monthly_revenue: "0",
+          quality_score: "50",
+          efficiency_score: "50",
+          popularity_score: "50",
+          sustainability_score: "50",
+        }),
+        [field]: value,
+      },
+    }));
+  };
+
+  const saveDraftForBrewery = async (brewery: Brewery) => {
+    const draft = comparisonDrafts[brewery.id];
+    if (!draft) return;
+    const avgMonthlyRevenue = parseFloat(draft.avg_monthly_revenue);
+    const qualityScore = parseFloat(draft.quality_score);
+    const efficiencyScore = parseFloat(draft.efficiency_score);
+    const popularityScore = parseFloat(draft.popularity_score);
+    const sustainabilityScore = parseFloat(draft.sustainability_score);
+    const scoreValues = [qualityScore, efficiencyScore, popularityScore, sustainabilityScore];
+    if (isNaN(avgMonthlyRevenue) || avgMonthlyRevenue < 0) {
+      setMessage({ type: "err", text: `Invalid revenue for ${brewery.name}.` });
+      return;
+    }
+    if (scoreValues.some((s) => isNaN(s) || s < 0 || s > 100)) {
+      setMessage({ type: "err", text: `Scores for ${brewery.name} must be between 0 and 100.` });
+      return;
+    }
+    setSavingDraftId(brewery.id);
+    setMessage(null);
+    try {
+      const r = await authFetch(`${apiBaseUrl}/breweries/${brewery.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          avg_monthly_revenue: avgMonthlyRevenue,
+          quality_score: qualityScore,
+          efficiency_score: efficiencyScore,
+          popularity_score: popularityScore,
+          sustainability_score: sustainabilityScore,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error((err as { detail?: string }).detail || "Save failed");
+      }
+      const updated = (await r.json()) as Brewery;
+      onBreweriesChange(breweries.map((b) => (b.id === updated.id ? updated : b)));
+      if (currentBrewery?.id === updated.id) {
+        onCurrentBreweryChange(updated);
+      }
+      setMessage({ type: "ok", text: `${updated.name} comparison values updated.` });
+    } catch (err) {
+      setMessage({ type: "err", text: err instanceof Error ? err.message : "Could not update values." });
+    } finally {
+      setSavingDraftId(null);
     }
   };
 
@@ -497,6 +587,60 @@ export default function BreweriesPage({
               <button type="button" className="primary-button" onClick={runComparison} disabled={compareLoading}>
                 {compareLoading ? "Comparing..." : "Compare Breweries"}
               </button>
+            </div>
+            <p className="muted" style={{ marginTop: 8, marginBottom: 8 }}>
+              Edit each brewery's comparison values below and save per row.
+            </p>
+            <div style={{ overflowX: "auto", marginBottom: 10 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>Brewery</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>Revenue</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>Quality</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>Efficiency</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>Popularity</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>Sustainability</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {breweries.map((b) => {
+                    const draft = comparisonDrafts[b.id] ?? {
+                      avg_monthly_revenue: String(b.avg_monthly_revenue ?? 0),
+                      quality_score: String(b.quality_score ?? 50),
+                      efficiency_score: String(b.efficiency_score ?? 50),
+                      popularity_score: String(b.popularity_score ?? 50),
+                      sustainability_score: String(b.sustainability_score ?? 50),
+                    };
+                    return (
+                      <tr key={b.id} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{b.name}</td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <input type="number" min={0} value={draft.avg_monthly_revenue} onChange={(e) => setDraftField(b.id, "avg_monthly_revenue", e.target.value)} style={{ width: 110 }} />
+                        </td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <input type="number" min={0} max={100} value={draft.quality_score} onChange={(e) => setDraftField(b.id, "quality_score", e.target.value)} style={{ width: 76 }} />
+                        </td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <input type="number" min={0} max={100} value={draft.efficiency_score} onChange={(e) => setDraftField(b.id, "efficiency_score", e.target.value)} style={{ width: 76 }} />
+                        </td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <input type="number" min={0} max={100} value={draft.popularity_score} onChange={(e) => setDraftField(b.id, "popularity_score", e.target.value)} style={{ width: 76 }} />
+                        </td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <input type="number" min={0} max={100} value={draft.sustainability_score} onChange={(e) => setDraftField(b.id, "sustainability_score", e.target.value)} style={{ width: 76 }} />
+                        </td>
+                        <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                          <button type="button" className="secondary-button" onClick={() => void saveDraftForBrewery(b)} disabled={savingDraftId === b.id}>
+                            {savingDraftId === b.id ? "Saving..." : "Save"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
             {compareResult ? (
               <div style={{ marginTop: 10 }}>

@@ -2,6 +2,8 @@ from datetime import datetime
 from dataclasses import replace
 import math
 import os
+import re
+import secrets
 import sys
 import threading
 import time
@@ -22,7 +24,7 @@ from ai_agent import (
     provider_status,
     pull_model,
 )
-from auth import get_api_key, init_auth_db, login_user, register_user, set_api_key, validate_token, get_user_from_token
+from auth import get_api_key, init_auth_db, login_user, logout_user, register_user, set_api_key, validate_token, get_user_from_token
 from data_ingest import (
     parse_csv_bytes,
     parse_excel_bytes,
@@ -61,6 +63,7 @@ from models import (
     TheoryReportResponse,
     WorkspaceCreateRequest,
     WorkspaceDescriptionUpdateRequest,
+    WorkspaceAIReportResponse,
     WorkspaceJoinRequest,
     WorkspaceStateUpdateRequest,
     BreweryCreateRequest,
@@ -915,6 +918,12 @@ def _workspace_results_to_csv_rows(config: dict | None, results: dict | None) ->
     return "\n".join(lines) + "\n"
 
 
+def _plain_text(value: object) -> str:
+    text = str(value or "")
+    # Remove basic HTML tags from rich notes before sending to AI prompt.
+    return re.sub(r"<[^>]+>", " ", text).strip()
+
+
 # ── Workspaces (collaboration) ─────────────────────────────────────────────
 
 @api.post("/workspaces")
@@ -999,6 +1008,64 @@ def workspace_export_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@api.post("/ai/workspaces/{workspace_id}/report", response_model=WorkspaceAIReportResponse)
+def workspace_ai_report(
+    workspace_id: int,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> WorkspaceAIReportResponse:
+    """Generate an AI report for the current workspace state."""
+    user_id, _ = auth
+    ws = get_workspace(workspace_id, user_id)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Workspace not found or access denied.")
+
+    state = ws.get("state") or {}
+    config = state.get("config") if isinstance(state, dict) else None
+    results = state.get("results") if isinstance(state, dict) else None
+    if not config and not results:
+        raise HTTPException(status_code=400, detail="Workspace has no saved state yet.")
+
+    breweries = list_breweries_for_user(user_id)
+    workspace_name = str(ws.get("name", "Workspace"))
+    workspace_description = _plain_text(ws.get("description", ""))
+    brewery_lines = []
+    for b in breweries[:25]:
+        brewery_lines.append(
+            f'- {b.get("name")} | revenue={b.get("avg_monthly_revenue", 0)} | '
+            f'quality={b.get("quality_score", 0)} | efficiency={b.get("efficiency_score", 0)} | '
+            f'popularity={b.get("popularity_score", 0)} | sustainability={b.get("sustainability_score", 0)}'
+        )
+
+    prompt = f"""You are an operations strategist for brewery supply chains.
+Create a concise workspace report based only on the given data.
+
+WORKSPACE:
+- name: {workspace_name}
+- description: {workspace_description or "(none)"}
+
+CONFIG:
+{config or {}}
+
+RESULTS:
+{results or {}}
+
+BREWERIES:
+{chr(10).join(brewery_lines) if brewery_lines else "(none)"}
+
+Write:
+1) Executive summary (3-5 bullets)
+2) What is working
+3) Biggest risks
+4) Recommended next actions (5 bullets)
+Keep it practical and specific."""
+
+    model = "llama3.2:1b"
+    report, err, _ = _timed_ai_call("ai.workspace.report", model, prompt, max_tokens=900)
+    if err:
+        raise HTTPException(status_code=503, detail=err)
+    return WorkspaceAIReportResponse(model=model, report=report or "")
 
 
 @api.put("/workspaces/{workspace_id}/state")
@@ -1225,15 +1292,25 @@ def auth_login(payload: AuthLoginRequest) -> AuthResponse:
     return AuthResponse(token=token, username=payload.username)
 
 
+@api.post("/auth/logout")
+def auth_logout(authorization: str | None = Header(default=None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token.")
+    token = authorization.split(" ", 1)[1].strip()
+    logout_user(token)
+    return {"ok": True}
+
+
 @api.post("/auth/guest", response_model=AuthResponse)
 def auth_guest() -> AuthResponse:
-    guest_username = "guest"
+    guest_username = f"guest_{secrets.token_hex(4)}"
     guest_password = "guest-pass-1234"
     try:
         register_user(guest_username, guest_password)
     except Exception:
-        # Guest user already exists; proceed to login.
-        pass
+        # Very unlikely collision, retry once.
+        guest_username = f"guest_{secrets.token_hex(5)}"
+        register_user(guest_username, guest_password)
     token = login_user(guest_username, guest_password)
     if token is None:
         raise HTTPException(status_code=500, detail="Could not create guest session.")

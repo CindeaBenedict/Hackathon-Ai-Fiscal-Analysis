@@ -3,10 +3,11 @@ import os
 import secrets
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 DB_PATH = os.getenv("AUTH_DB_PATH", "auth.db")
+SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "24"))
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -49,10 +50,19 @@ def init_auth_db() -> None:
                 token TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
+                expires_at TEXT,
+                revoked_at TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
             """
         )
+        session_cols = {
+            str(r["name"]) for r in conn.execute("PRAGMA table_info(sessions)").fetchall()
+        }
+        if "expires_at" not in session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN expires_at TEXT")
+        if "revoked_at" not in session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN revoked_at TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS api_keys (
@@ -97,15 +107,30 @@ def login_user(username: str, password: str) -> str | None:
             return None
 
         token = secrets.token_urlsafe(32)
+        now = datetime.utcnow()
+        expires_at = (now + timedelta(hours=SESSION_TTL_HOURS)).isoformat()
         conn.execute(
-            "INSERT INTO sessions(token, user_id, created_at) VALUES (?, ?, ?)",
-            (token, row["id"], datetime.utcnow().isoformat()),
+            "INSERT INTO sessions(token, user_id, created_at, expires_at, revoked_at) VALUES (?, ?, ?, ?, NULL)",
+            (token, row["id"], now.isoformat(), expires_at),
+        )
+        # Cleanup old expired/revoked sessions for this user.
+        conn.execute(
+            """
+            DELETE FROM sessions
+            WHERE user_id = ?
+              AND (
+                (expires_at IS NOT NULL AND expires_at <= ?)
+                OR revoked_at IS NOT NULL
+              )
+            """,
+            (row["id"], now.isoformat()),
         )
         conn.commit()
         return token
 
 
 def validate_token(token: str) -> str | None:
+    now_iso = datetime.utcnow().isoformat()
     with _get_conn() as conn:
         row = conn.execute(
             """
@@ -113,8 +138,10 @@ def validate_token(token: str) -> str | None:
             FROM sessions s
             JOIN users u ON u.id = s.user_id
             WHERE s.token = ?
+              AND (s.revoked_at IS NULL)
+              AND (s.expires_at IS NULL OR s.expires_at > ?)
             """,
-            (token,),
+            (token, now_iso),
         ).fetchone()
         if row is None:
             return None
@@ -123,6 +150,7 @@ def validate_token(token: str) -> str | None:
 
 def get_user_from_token(token: str) -> tuple[int | None, str | None]:
     """Return (user_id, username) for the given session token, or (None, None)."""
+    now_iso = datetime.utcnow().isoformat()
     with _get_conn() as conn:
         row = conn.execute(
             """
@@ -130,12 +158,24 @@ def get_user_from_token(token: str) -> tuple[int | None, str | None]:
             FROM sessions s
             JOIN users u ON u.id = s.user_id
             WHERE s.token = ?
+              AND (s.revoked_at IS NULL)
+              AND (s.expires_at IS NULL OR s.expires_at > ?)
             """,
-            (token,),
+            (token, now_iso),
         ).fetchone()
         if row is None:
             return (None, None)
         return (int(row["id"]), str(row["username"]))
+
+
+def logout_user(token: str) -> None:
+    """Revoke a session token."""
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE sessions SET revoked_at = ? WHERE token = ?",
+            (datetime.utcnow().isoformat(), token),
+        )
+        conn.commit()
 
 
 def get_api_key(key_name: str) -> str | None:

@@ -301,7 +301,7 @@ class TheoryReportResponse(BaseModel):
 
 class WorkspaceCreateRequest(BaseModel):
     name: Optional[str] = Field(default="Shared Workspace", max_length=128)
-    description: Optional[str] = Field(default=None, max_length=512)
+    description: Optional[str] = Field(default=None, max_length=12000)
 
 
 class WorkspaceJoinRequest(BaseModel):
@@ -315,7 +315,12 @@ class WorkspaceStateUpdateRequest(BaseModel):
 
 
 class WorkspaceDescriptionUpdateRequest(BaseModel):
-    description: Optional[str] = Field(default=None, max_length=512)
+    description: Optional[str] = Field(default=None, max_length=12000)
+
+
+class WorkspaceAIReportResponse(BaseModel):
+    model: str
+    report: str
 
 
 # ── Breweries (multi-location map) ──────────────────────────────────────────

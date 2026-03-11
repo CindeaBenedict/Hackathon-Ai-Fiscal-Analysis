@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { Brewery } from "./BreweriesPage";
 
 export type Workspace = {
   id: number;
@@ -27,6 +28,9 @@ type CollaboratePageProps = {
   currentWorkspace: Workspace | null;
   onCurrentWorkspaceChange: (ws: Workspace | null) => void;
   onLoadWorkspaceState?: (config: Record<string, unknown> | null, results: Record<string, unknown> | null) => void;
+  breweries: Brewery[];
+  currentBrewery: Brewery | null;
+  onSaveWorkspaceState?: (config: Record<string, unknown>, results: Record<string, unknown> | null) => void;
 };
 
 const STORAGE_KEY = "supply_chain_current_workspace_id";
@@ -37,6 +41,9 @@ export default function CollaboratePage({
   currentWorkspace,
   onCurrentWorkspaceChange,
   onLoadWorkspaceState,
+  breweries,
+  currentBrewery,
+  onSaveWorkspaceState,
 }: CollaboratePageProps) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
@@ -47,6 +54,61 @@ export default function CollaboratePage({
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [liveSyncEnabled, setLiveSyncEnabled] = useState(true);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [workspaceBreweries, setWorkspaceBreweries] = useState<Brewery[]>([]);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [aiReport, setAiReport] = useState<string>("");
+  const [aiReportLoading, setAiReportLoading] = useState(false);
+  const lastWorkspaceStateUpdatedAt = useRef<string | null>(null);
+  const snapshotInputRef = useRef<HTMLInputElement | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
+
+  const extractBreweriesFromConfig = (config: Record<string, unknown> | null): Brewery[] => {
+    if (!config || !Array.isArray(config.breweries)) return [];
+    return config.breweries
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+      .map((x, idx) => ({
+        id: typeof x.id === "number" ? x.id : idx + 1,
+        name: String(x.name ?? "Unnamed Brewery"),
+        lat: Number(x.lat ?? 0),
+        lng: Number(x.lng ?? 0),
+        address: String(x.address ?? ""),
+        description: String(x.description ?? ""),
+        avg_monthly_revenue: Number(x.avg_monthly_revenue ?? 0),
+        quality_score: Number(x.quality_score ?? 50),
+        efficiency_score: Number(x.efficiency_score ?? 50),
+        popularity_score: Number(x.popularity_score ?? 50),
+        sustainability_score: Number(x.sustainability_score ?? 50),
+        created_at: String(x.created_at ?? new Date().toISOString()),
+      }));
+  };
+
+  const stripHtml = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+
+  const sanitizeHtml = (raw: string): string => {
+    const allowedTags = new Set(["B", "I", "U", "STRONG", "EM", "P", "BR", "UL", "OL", "LI", "H1", "H2", "H3"]);
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(raw, "text/html");
+    const walk = (node: Node) => {
+      const children = Array.from(node.childNodes);
+      for (const child of children) {
+        if (child.nodeType === Node.ELEMENT_NODE) {
+          const el = child as HTMLElement;
+          if (!allowedTags.has(el.tagName)) {
+            const text = doc.createTextNode(el.textContent || "");
+            el.replaceWith(text);
+          } else {
+            // Remove all attrs in allowed tags for safety.
+            Array.from(el.attributes).forEach((a) => el.removeAttribute(a.name));
+            walk(el);
+          }
+        }
+      }
+    };
+    walk(doc.body);
+    return doc.body.innerHTML;
+  };
 
   const loadWorkspaces = useCallback(async () => {
     try {
@@ -56,7 +118,10 @@ export default function CollaboratePage({
       setWorkspaces(data);
       if (currentWorkspace) {
         const fresh = data.find((w) => w.id === currentWorkspace.id);
-        if (fresh) setEditDescription(fresh.description || "");
+        if (fresh) {
+          setEditDescription(fresh.description || "");
+          if (editorRef.current) editorRef.current.innerHTML = sanitizeHtml(fresh.description || "");
+        }
       }
     } catch {
       setWorkspaces([]);
@@ -89,6 +154,8 @@ export default function CollaboratePage({
   useEffect(() => {
     if (!currentWorkspace) return;
     setEditDescription(currentWorkspace.description || "");
+    if (editorRef.current) editorRef.current.innerHTML = sanitizeHtml(currentWorkspace.description || "");
+    lastWorkspaceStateUpdatedAt.current = null;
     try {
       localStorage.setItem(STORAGE_KEY, String(currentWorkspace.id));
     } catch {
@@ -162,6 +229,11 @@ export default function CollaboratePage({
       const data = (await r.json()) as WorkspaceWithState;
       if (data.state?.config || data.state?.results) {
         onLoadWorkspaceState(data.state?.config ?? null, data.state?.results ?? null);
+        setWorkspaceBreweries(extractBreweriesFromConfig(data.state?.config ?? null));
+        if (data.state?.updated_at) {
+          lastWorkspaceStateUpdatedAt.current = data.state.updated_at;
+          setLastSyncedAt(data.state.updated_at);
+        }
         setMessage({ type: "ok", text: "Loaded shared config and results." });
       } else {
         setMessage({ type: "err", text: "No saved state in this workspace yet." });
@@ -222,6 +294,132 @@ export default function CollaboratePage({
     }
   };
 
+  const downloadWorkspaceSnapshot = async () => {
+    if (!currentWorkspace) return;
+    setSnapshotLoading(true);
+    try {
+      const r = await authFetch(`${apiBaseUrl}/workspaces/${currentWorkspace.id}`);
+      if (!r.ok) throw new Error("Could not load workspace.");
+      const data = (await r.json()) as WorkspaceWithState;
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${currentWorkspace.name.replace(/\s+/g, "_").toLowerCase()}_snapshot.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setMessage({ type: "ok", text: "Local snapshot downloaded." });
+    } catch {
+      setMessage({ type: "err", text: "Could not download snapshot." });
+    } finally {
+      setSnapshotLoading(false);
+    }
+  };
+
+  const applyEditorCommand = (command: string, value?: string) => {
+    editorRef.current?.focus();
+    document.execCommand(command, false, value);
+    if (editorRef.current) {
+      setEditDescription(sanitizeHtml(editorRef.current.innerHTML));
+    }
+  };
+
+  const generateAiReport = async () => {
+    if (!currentWorkspace) return;
+    setAiReportLoading(true);
+    setMessage(null);
+    try {
+      const r = await authFetch(`${apiBaseUrl}/ai/workspaces/${currentWorkspace.id}/report`, {
+        method: "POST",
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error((d as { detail?: string }).detail ?? "Report failed");
+      }
+      const data = (await r.json()) as { model: string; report: string };
+      setAiReport(data.report || "");
+      setMessage({ type: "ok", text: "AI report generated." });
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof Error ? e.message : "Could not generate report." });
+    } finally {
+      setAiReportLoading(false);
+    }
+  };
+
+  const mergeBreweries = (base: Brewery[], incoming: Brewery[]): Brewery[] => {
+    const key = (b: Brewery) => `${b.name.toLowerCase()}|${b.lat.toFixed(5)}|${b.lng.toFixed(5)}`;
+    const map = new Map<string, Brewery>();
+    for (const b of base) map.set(key(b), b);
+    for (const b of incoming) map.set(key(b), b);
+    return Array.from(map.values());
+  };
+
+  const importAndMergeSnapshot = async (file: File) => {
+    if (!currentWorkspace || !onSaveWorkspaceState) return;
+    setSnapshotLoading(true);
+    setMessage(null);
+    try {
+      const text = await file.text();
+      const snapshot = JSON.parse(text) as WorkspaceWithState;
+      const incomingConfig = (snapshot.state?.config ?? {}) as Record<string, unknown>;
+      const incomingResults = (snapshot.state?.results ?? null) as Record<string, unknown> | null;
+      const incomingBreweries = extractBreweriesFromConfig(incomingConfig);
+      const mergedBreweries = mergeBreweries(breweries, incomingBreweries);
+      const mergedConfig: Record<string, unknown> = {
+        ...(incomingConfig || {}),
+        breweries: mergedBreweries,
+        currentBreweryId: currentBrewery?.id ?? incomingConfig.currentBreweryId ?? null,
+      };
+      onSaveWorkspaceState(mergedConfig, incomingResults);
+      onLoadWorkspaceState?.(mergedConfig, incomingResults);
+      setWorkspaceBreweries(mergedBreweries);
+      setMessage({ type: "ok", text: "Snapshot merged into workspace." });
+    } catch {
+      setMessage({ type: "err", text: "Invalid snapshot file." });
+    } finally {
+      setSnapshotLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!liveSyncEnabled || !currentWorkspace || !onLoadWorkspaceState) return;
+
+    const interval = setInterval(() => {
+      authFetch(`${apiBaseUrl}/workspaces/${currentWorkspace.id}`)
+        .then(async (r) => {
+          if (!r.ok) return null;
+          return (await r.json()) as WorkspaceWithState;
+        })
+        .then((data) => {
+          if (!data) return;
+          const updatedAt = data.state?.updated_at ?? null;
+          if (!updatedAt) return;
+          if (lastWorkspaceStateUpdatedAt.current === updatedAt) return;
+          lastWorkspaceStateUpdatedAt.current = updatedAt;
+          setLastSyncedAt(updatedAt);
+          setWorkspaceBreweries(extractBreweriesFromConfig(data.state?.config ?? null));
+          onLoadWorkspaceState(data.state?.config ?? null, data.state?.results ?? null);
+        })
+        .catch(() => {});
+
+      // Also refresh workspace + members list so changes appear live.
+      void loadWorkspaces();
+      void loadMembers();
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [
+    apiBaseUrl,
+    authFetch,
+    currentWorkspace,
+    liveSyncEnabled,
+    loadMembers,
+    loadWorkspaces,
+    onLoadWorkspaceState,
+  ]);
+
   return (
     <section className="panel" style={{ maxWidth: "48rem" }}>
       <h2>Collaborate</h2>
@@ -277,6 +475,22 @@ export default function CollaboratePage({
         {workspaces.length > 0 && (
           <div className="panel" style={{ padding: "1rem", background: "var(--bg-2)" }}>
             <h3 style={{ marginBottom: "0.5rem" }}>Your workspaces</h3>
+            {currentWorkspace ? (
+              <div style={{ marginBottom: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setLiveSyncEnabled((v) => !v)}
+                >
+                  {liveSyncEnabled ? "Live sync: ON" : "Live sync: OFF"}
+                </button>
+                <span className="muted" style={{ fontSize: "0.8rem" }}>
+                  {lastSyncedAt
+                    ? `Last synced ${new Date(lastSyncedAt).toLocaleTimeString()}`
+                    : "Waiting for first sync..."}
+                </span>
+              </div>
+            ) : null}
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
               {workspaces.map((ws) => (
                 <li
@@ -294,7 +508,7 @@ export default function CollaboratePage({
                     <span className="muted" style={{ marginLeft: "0.5rem" }}>{ws.invite_code}</span>
                     {ws.description ? (
                       <p className="muted" style={{ marginTop: "0.25rem", fontSize: "0.82rem" }}>
-                        {ws.description}
+                        {stripHtml(ws.description)}
                       </p>
                     ) : null}
                   </div>
@@ -317,11 +531,24 @@ export default function CollaboratePage({
             {currentWorkspace && (
               <div style={{ marginTop: "1rem", display: "grid", gap: "0.5rem" }}>
                 <h4>Active workspace notes</h4>
-                <textarea
-                  value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
-                  rows={3}
-                  placeholder="Add context for collaborators"
+                <div className="editor-toolbar">
+                  <button type="button" className="secondary-button" onClick={() => applyEditorCommand("bold")}>B</button>
+                  <button type="button" className="secondary-button" onClick={() => applyEditorCommand("italic")}>I</button>
+                  <button type="button" className="secondary-button" onClick={() => applyEditorCommand("underline")}>U</button>
+                  <button type="button" className="secondary-button" onClick={() => applyEditorCommand("insertUnorderedList")}>• List</button>
+                  <button type="button" className="secondary-button" onClick={() => applyEditorCommand("insertOrderedList")}>1. List</button>
+                  <button type="button" className="secondary-button" onClick={() => applyEditorCommand("formatBlock", "H2")}>H2</button>
+                  <button type="button" className="secondary-button" onClick={() => applyEditorCommand("removeFormat")}>Clear</button>
+                </div>
+                <div
+                  ref={editorRef}
+                  className="wordlike-editor"
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={(e) => {
+                    setEditDescription(sanitizeHtml((e.target as HTMLDivElement).innerHTML));
+                  }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(editDescription) }}
                 />
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   <button type="button" className="secondary-button" onClick={saveDescription} disabled={loading}>
@@ -335,8 +562,52 @@ export default function CollaboratePage({
                   <button type="button" className="secondary-button" onClick={downloadWorkspaceCsv}>
                     Download CSV
                   </button>
+                  <button type="button" className="secondary-button" onClick={generateAiReport} disabled={aiReportLoading}>
+                    {aiReportLoading ? "Generating..." : "Generate AI report"}
+                  </button>
+                  <button type="button" className="secondary-button" onClick={downloadWorkspaceSnapshot} disabled={snapshotLoading}>
+                    {snapshotLoading ? "Working..." : "Download snapshot"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={snapshotLoading}
+                    onClick={() => snapshotInputRef.current?.click()}
+                  >
+                    Import + merge snapshot
+                  </button>
+                  <input
+                    ref={snapshotInputRef}
+                    type="file"
+                    accept="application/json"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.currentTarget.value = "";
+                      if (f) void importAndMergeSnapshot(f);
+                    }}
+                  />
                 </div>
               </div>
+            )}
+            {aiReport ? (
+              <div className="panel" style={{ marginTop: "0.5rem", padding: "0.8rem" }}>
+                <h4 style={{ marginBottom: 8 }}>AI Workspace Report</h4>
+                <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{aiReport}</pre>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {currentWorkspace && (
+          <div className="panel" style={{ padding: "1rem", background: "var(--bg-2)" }}>
+            <h3 style={{ marginBottom: "0.5rem" }}>Breweries in this workspace</h3>
+            {workspaceBreweries.length === 0 ? (
+              <p className="muted">No breweries saved in workspace state yet.</p>
+            ) : (
+              <p className="muted">
+                {workspaceBreweries.map((b) => b.name).join(", ")}
+              </p>
             )}
           </div>
         )}
