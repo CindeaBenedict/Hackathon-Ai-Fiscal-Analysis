@@ -10,7 +10,14 @@ DEFAULT_DATA_DIR = os.getenv("APP_DATA_DIR", os.path.join(BACKEND_DIR, "data"))
 
 def resolve_db_path() -> str:
     """Resolve a stable default DB path unless overridden by AUTH_DB_PATH."""
-    return os.getenv("AUTH_DB_PATH", os.path.join(DEFAULT_DATA_DIR, "auth.db"))
+    explicit = os.getenv("AUTH_DB_PATH")
+    if explicit:
+        return explicit
+    # Heroku dynos have an ephemeral but writable /tmp. Default there to avoid
+    # startup/auth failures when repo paths are read-only.
+    if os.getenv("DYNO"):
+        return "/tmp/team28_auth.db"
+    return os.path.join(DEFAULT_DATA_DIR, "auth.db")
 
 
 def _ensure_parent(path: str) -> None:

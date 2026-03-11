@@ -139,7 +139,8 @@ CORS_ALLOW_ORIGINS = os.getenv(
 )
 ALLOWED_ORIGINS = [origin.strip() for origin in CORS_ALLOW_ORIGINS.split(",") if origin.strip()]
 AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "session_token")
-AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes"}
+_default_cookie_secure = "1" if os.getenv("DYNO") else "0"
+AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", _default_cookie_secure).strip().lower() in {"1", "true", "yes"}
 AUTH_COOKIE_SAMESITE = (os.getenv("AUTH_COOKIE_SAMESITE", "lax") or "lax").strip().lower()
 if AUTH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
     AUTH_COOKIE_SAMESITE = "lax"

@@ -12,7 +12,8 @@ DB_PATH = resolve_db_path()
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "720"))
 RESET_TOKEN_TTL_MINUTES = int(os.getenv("RESET_TOKEN_TTL_MINUTES", "30"))
 AUTH_SCHEMA_VERSION = 3
-ALLOW_EPHEMERAL_DB_FALLBACK = os.getenv("ALLOW_EPHEMERAL_DB_FALLBACK", "0").strip().lower() in {"1", "true", "yes"}
+_default_ephemeral_fallback = "1" if os.getenv("DYNO") else "0"
+ALLOW_EPHEMERAL_DB_FALLBACK = os.getenv("ALLOW_EPHEMERAL_DB_FALLBACK", _default_ephemeral_fallback).strip().lower() in {"1", "true", "yes"}
 
 
 def _get_conn() -> sqlite3.Connection:
