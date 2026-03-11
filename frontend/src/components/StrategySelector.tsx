@@ -62,6 +62,7 @@ type StrategySelectorProps = {
   onSimulate: () => void;
   onStop: () => void;
   isLoading: boolean;
+  apiBaseUrl: string;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -88,6 +89,7 @@ function StrategySelector({
   onSimulate,
   onStop,
   isLoading,
+  apiBaseUrl,
 }: StrategySelectorProps) {
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
   const [customModel, setCustomModel] = useState("");
@@ -103,11 +105,11 @@ function StrategySelector({
 
   // Poll provider status once on mount
   useEffect(() => {
-    fetch("/api/ai/status")
-      .then((r) => r.json())
+    fetch(`${apiBaseUrl}/ai/status`)
+      .then((r) => { if (!r.ok) throw new Error("not ok"); return r.json(); })
       .then((data: ProviderStatus) => setProviderStatus(data))
       .catch(() => null);
-  }, []);
+  }, [apiBaseUrl]);
 
   const activePreset = MODEL_PRESETS.find((p) => p.model === aiModel);
   const activeProvider = activePreset?.provider ?? "ollama";

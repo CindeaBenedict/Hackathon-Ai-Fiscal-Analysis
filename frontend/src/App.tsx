@@ -129,7 +129,14 @@ function App() {
     if (authToken) {
       headers.set("Authorization", `Bearer ${authToken}`);
     }
-    return fetch(url, { ...init, headers });
+    return fetch(url, { ...init, headers }).then((res) => {
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("auth_user");
+        setAuthToken(null);
+      }
+      return res;
+    });
   }
 
   async function runSimulation() {
@@ -628,6 +635,7 @@ function App() {
                 onSimulate={runSimulation}
                 onStop={stopSimulation}
                 isLoading={isLoading}
+                apiBaseUrl={API_BASE_URL}
               />
               {error ? <p className="error">{error}</p> : null}
               {results ? (
