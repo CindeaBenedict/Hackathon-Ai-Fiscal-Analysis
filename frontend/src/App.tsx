@@ -6,6 +6,7 @@ import TheoryPage, { TheoryReport } from "./components/TheoryPage";
 import SettingsPage from "./components/SettingsPage";
 import CollaboratePage, { STORAGE_KEY as WORKSPACE_STORAGE_KEY } from "./components/CollaboratePage";
 import BreweriesPage, { Brewery } from "./components/BreweriesPage";
+import SuppliersPage, { Supplier } from "./components/SuppliersPage";
 import type { Workspace } from "./components/CollaboratePage";
 
 type SimulationResponse = SimulationResults;
@@ -43,7 +44,7 @@ const DEFAULT_ORDER_BY_STRATEGY: Record<Strategy, number> = {
 
 function App() {
   const [activePage, setActivePage] = useState<
-    "dashboard" | "logs" | "theory" | "collaborate" | "breweries" | "settings"
+    "dashboard" | "logs" | "theory" | "collaborate" | "breweries" | "suppliers" | "settings"
   >("dashboard");
   const [darkMode, setDarkMode] = useState(true);
   const [strategy, setStrategy] = useState<Strategy>("custom");
@@ -73,6 +74,7 @@ function App() {
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
   const [breweries, setBreweries] = useState<Brewery[]>([]);
   const [currentBrewery, setCurrentBrewery] = useState<Brewery | null>(null);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [authBootstrapLoading, setAuthBootstrapLoading] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authUsernameInput, setAuthUsernameInput] = useState("");
@@ -102,6 +104,7 @@ function App() {
       salePrice,
       aiModel,
       breweries,
+      suppliers,
       currentBreweryId: currentBrewery?.id ?? null,
     };
   }
@@ -131,8 +134,18 @@ function App() {
       saveWorkspaceState(config as Record<string, unknown>, results);
     }
   }
+  function handleSuppliersChange(nextSuppliers: Supplier[]) {
+    setSuppliers(nextSuppliers);
+    if (currentWorkspace) {
+      const config = {
+        ...buildWorkspaceConfig(),
+        suppliers: nextSuppliers,
+      };
+      saveWorkspaceState(config as Record<string, unknown>, results);
+    }
+  }
   const railItems: Array<{
-    id: "dashboard" | "logs" | "theory" | "collaborate" | "breweries" | "settings";
+    id: "dashboard" | "logs" | "theory" | "collaborate" | "breweries" | "suppliers" | "settings";
     title: string;
     icon: React.ReactNode;
   }> = [
@@ -197,6 +210,17 @@ function App() {
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
           <circle cx="10" cy="10" r="2.5" />
           <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.93 4.93l1.41 1.41M13.66 13.66l1.41 1.41M4.93 15.07l1.41-1.41M13.66 6.34l1.41-1.41" />
+        </svg>
+      ),
+    },
+    {
+      id: "suppliers",
+      title: "Suppliers",
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+          <path d="M3 6h14v9H3z" />
+          <path d="M7 6V4h6v2" />
+          <path d="M9 10h2" />
         </svg>
       ),
     },
@@ -503,6 +527,7 @@ function App() {
         weekly_fixed_cost: weeklyFixedCost,
         bankruptcy_cash_threshold: bankruptcyThreshold,
         sale_price: salePrice,
+        current_brewery_id: currentBrewery?.id ?? undefined,
       };
       const response = await authFetch(`${API_BASE_URL}/simulate/stable`, {
         method: "POST",
@@ -554,6 +579,7 @@ function App() {
           salePrice,
           aiModel,
           breweries,
+          suppliers,
           currentBreweryId: currentBrewery?.id ?? null,
         };
         saveWorkspaceState(config, data);
@@ -599,6 +625,7 @@ function App() {
           weekly_fixed_cost: weeklyFixedCost,
           bankruptcy_cash_threshold: bankruptcyThreshold,
           sale_price: salePrice,
+          current_brewery_id: currentBrewery?.id ?? undefined,
         };
         const res = await authFetch(`${API_BASE_URL}/simulate/stable`, {
           method: "POST",
@@ -773,6 +800,7 @@ function App() {
         demand_std_dev: demandStdDev,
         weekly_fixed_cost: weeklyFixedCost,
         bankruptcy_cash_threshold: bankruptcyThreshold,
+        current_brewery_id: currentBrewery?.id ?? undefined,
         model: aiModel,
         confidence_level: 0.95,
         target_margin_of_error: 1000,
@@ -872,6 +900,30 @@ function App() {
       if (typeof config.bankruptcyThreshold === "number") setBankruptcyThreshold(config.bankruptcyThreshold);
       if (typeof config.salePrice === "number") setSalePrice(config.salePrice);
       if (typeof config.aiModel === "string") setAiModel(config.aiModel);
+      if (Array.isArray(config.suppliers)) {
+        const incomingSuppliers = config.suppliers
+          .filter((s): s is Supplier => {
+            if (!s || typeof s !== "object") return false;
+            const x = s as Record<string, unknown>;
+            return typeof x.name === "string" && typeof x.lat === "number" && typeof x.lng === "number";
+          })
+          .map((s, idx) => {
+            const x = s as unknown as Record<string, unknown>;
+            return {
+              id: typeof x.id === "number" ? x.id : idx + 1,
+              name: String(x.name ?? "Unnamed Supplier"),
+              category: String(x.category ?? "other") as Supplier["category"],
+              lat: Number(x.lat ?? 0),
+              lng: Number(x.lng ?? 0),
+              address: String(x.address ?? ""),
+              unit_price: Number(x.unit_price ?? 0),
+              shipping_cost_per_km: Number(x.shipping_cost_per_km ?? 0),
+              lead_time_days: Number(x.lead_time_days ?? 3),
+              created_at: String(x.created_at ?? new Date().toISOString()),
+            } satisfies Supplier;
+          });
+        setSuppliers(incomingSuppliers);
+      }
       if (Array.isArray(config.breweries)) {
         const incoming = config.breweries.filter((b): b is Brewery => {
           if (!b || typeof b !== "object") return false;
@@ -1278,6 +1330,7 @@ function App() {
                         salePrice,
                         aiModel,
                         breweries,
+                        suppliers,
                         currentBreweryId: currentBrewery?.id ?? null,
                       };
                       authFetch(`${API_BASE_URL}/workspaces/${currentWorkspace.id}/state`, {
@@ -1345,6 +1398,15 @@ function App() {
                   saveWorkspaceState(config as Record<string, unknown>, results);
                 }
               }}
+            />
+          ) : null}
+
+          {activePage === "suppliers" ? (
+            <SuppliersPage
+              apiBaseUrl={API_BASE_URL}
+              authFetch={authFetch}
+              suppliers={suppliers}
+              onSuppliersChange={handleSuppliersChange}
             />
           ) : null}
 

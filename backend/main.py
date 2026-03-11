@@ -89,6 +89,9 @@ from models import (
     BreweryScoreBreakdown,
     BreweryComparisonItem,
     BreweryCompareResponse,
+    SupplierCreateRequest,
+    SupplierUpdateRequest,
+    SupplierResponse,
 )
 from simulator import (
     SimulationConfig,
@@ -113,6 +116,14 @@ from breweries import (
     get_brewery,
     update_brewery,
     delete_brewery,
+)
+from suppliers import (
+    init_suppliers_db,
+    create_supplier,
+    list_suppliers_for_user,
+    get_supplier,
+    update_supplier,
+    delete_supplier,
 )
 
 
@@ -168,6 +179,7 @@ def startup_event() -> None:
         init_auth_db()
         init_workspaces_db()
         init_breweries_db()
+        init_suppliers_db()
         print("Backend startup: auth DB OK, starting model pull thread.", file=sys.stderr, flush=True)
         threading.Thread(target=_auto_pull_model, daemon=True).start()
     except Exception as e:
@@ -277,9 +289,92 @@ def update_ai_keys(
     return get_ai_keys()
 
 
-def _config_from_request(payload: SimulationRequest) -> SimulationConfig:
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    # Approximate great-circle distance in km.
+    r = 6371.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlng / 2) ** 2
+    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _effective_sourcing_adjustments(
+    payload: SimulationRequest,
+    user_id: int | None,
+) -> tuple[float, float]:
+    """Return (extra_order_cost_per_unit, extra_weekly_fixed_cost)."""
+    if user_id is None or payload.current_brewery_id is None:
+        return (0.0, 0.0)
+    brewery = get_brewery(payload.current_brewery_id, user_id)
+    if brewery is None:
+        return (0.0, 0.0)
+    suppliers = list_suppliers_for_user(user_id)
+    if not suppliers:
+        return (0.0, 0.0)
+
+    road_factor = 1.23  # rough road-distance multiplier over straight-line distance
+    demand_units = max(float(payload.baseline_demand), 1.0)
+
+    def landed_unit_cost_for_category(target: str) -> float:
+        candidates = [
+            s
+            for s in suppliers
+            if s.get("category") == target
+            or (target == "malt" and s.get("category") == "ingredients")
+            or (target == "yeast" and s.get("category") == "ingredients")
+        ]
+        if not candidates:
+            return 0.0
+        best = None
+        for s in candidates:
+            distance_km = _haversine_km(
+                float(brewery["lat"]),
+                float(brewery["lng"]),
+                float(s["lat"]),
+                float(s["lng"]),
+            ) * road_factor
+            shipping_per_unit = (distance_km * float(s.get("shipping_cost_per_km", 0.0))) / demand_units
+            landed = float(s.get("unit_price", 0.0)) + shipping_per_unit
+            if best is None or landed < best:
+                best = landed
+        return float(best or 0.0)
+
+    # Per-unit sourcing cost components.
+    bottles = landed_unit_cost_for_category("bottles")
+    caps = landed_unit_cost_for_category("caps")
+    malt = landed_unit_cost_for_category("malt")
+    yeast = landed_unit_cost_for_category("yeast")
+    water = landed_unit_cost_for_category("water")
+    extra_order_cost = bottles + caps + malt + yeast + water
+
+    # Fuel contributes to weekly fixed logistics overhead (transport/utility burden).
+    fuel_candidates = [s for s in suppliers if s.get("category") == "fuel"]
+    extra_weekly_fixed = 0.0
+    if fuel_candidates:
+        best_weekly = None
+        for s in fuel_candidates:
+            distance_km = _haversine_km(
+                float(brewery["lat"]),
+                float(brewery["lng"]),
+                float(s["lat"]),
+                float(s["lng"]),
+            ) * road_factor
+            weekly_fuel = float(s.get("unit_price", 0.0)) * (demand_units * 0.08)
+            weekly_delivery = distance_km * float(s.get("shipping_cost_per_km", 0.0)) * 0.15
+            total_weekly = weekly_fuel + weekly_delivery
+            if best_weekly is None or total_weekly < best_weekly:
+                best_weekly = total_weekly
+        extra_weekly_fixed = float(best_weekly or 0.0)
+
+    return (extra_order_cost, extra_weekly_fixed)
+
+
+def _config_from_request(payload: SimulationRequest, user_id: int | None = None) -> SimulationConfig:
     # Zero starting cash = no inventory (cannot operate without capital)
     initial_inv = payload.initial_inventory if (payload.initial_cash or 0) > 0 else 0.0
+    extra_order_cost, extra_weekly_fixed = _effective_sourcing_adjustments(payload, user_id)
     return SimulationConfig(
         initial_inventory=initial_inv,
         initial_cash=payload.initial_cash,
@@ -288,9 +383,9 @@ def _config_from_request(payload: SimulationRequest) -> SimulationConfig:
         lead_time_weeks=payload.lead_time_weeks,
         holding_cost=payload.holding_cost,
         stockout_penalty=payload.stockout_penalty,
-        order_cost=payload.order_cost,
+        order_cost=payload.order_cost + extra_order_cost,
         sale_price=payload.sale_price,
-        weekly_fixed_cost=payload.weekly_fixed_cost,
+        weekly_fixed_cost=payload.weekly_fixed_cost + extra_weekly_fixed,
         bankruptcy_cash_threshold=payload.bankruptcy_cash_threshold,
         supplier_delay_probability=payload.supplier_delay_probability,
         demand_spike_probability=payload.demand_spike_probability,
@@ -438,25 +533,26 @@ def _factor_impact_analysis(
 
 
 @api.post("/simulate", response_model=SimulationResponse)
-def simulate(payload: SimulationRequest, _: str = Depends(require_auth)) -> SimulationResponse:
+def simulate(payload: SimulationRequest, auth: tuple[int, str] = Depends(require_auth_user)) -> SimulationResponse:
     if payload.strategy == Strategy.custom and payload.order_quantity is None:
         raise HTTPException(
             status_code=400,
             detail="order_quantity is required when strategy is custom.",
         )
 
+    user_id, _ = auth
     result = run_monte_carlo(
         strategy=payload.strategy,
         simulations=payload.simulations,
         custom_quantity=payload.order_quantity,
-        config=_config_from_request(payload),
+        config=_config_from_request(payload, user_id=user_id),
     )
     return SimulationResponse(**result)
 
 
 @api.post("/simulate/compact", response_model=CompactSimulationResponse)
 def simulate_compact(
-    payload: SimulationRequest, _: str = Depends(require_auth)
+    payload: SimulationRequest, auth: tuple[int, str] = Depends(require_auth_user)
 ) -> CompactSimulationResponse:
     if payload.strategy == Strategy.custom and payload.order_quantity is None:
         raise HTTPException(
@@ -464,11 +560,12 @@ def simulate_compact(
             detail="order_quantity is required when strategy is custom.",
         )
 
+    user_id, _ = auth
     result = run_monte_carlo_compact(
         strategy=payload.strategy,
         simulations=payload.simulations,
         custom_quantity=payload.order_quantity,
-        config=_config_from_request(payload),
+        config=_config_from_request(payload, user_id=user_id),
     )
     return CompactSimulationResponse(**result)
 
@@ -834,7 +931,7 @@ Advisor:"""
 
 @api.post("/theory/report", response_model=TheoryReportResponse)
 def theory_report(
-    payload: TheoryReportRequest, _: str = Depends(require_auth)
+    payload: TheoryReportRequest, auth: tuple[int, str] = Depends(require_auth_user)
 ) -> TheoryReportResponse:
     if payload.strategy == Strategy.custom and payload.order_quantity is None:
         raise HTTPException(
@@ -842,7 +939,8 @@ def theory_report(
             detail="order_quantity is required when strategy is custom.",
         )
 
-    config = _config_from_request(payload)
+    user_id, _ = auth
+    config = _config_from_request(payload, user_id=user_id)
     analysis_simulations = min(payload.simulations, 600)
     full = run_monte_carlo(
         strategy=payload.strategy,
@@ -926,18 +1024,19 @@ Write:
 
 @api.post("/simulate/stable", response_model=SimulationResponse)
 def simulate_stable(
-    payload: SimulationRequest, _: str = Depends(require_auth)
+    payload: SimulationRequest, auth: tuple[int, str] = Depends(require_auth_user)
 ) -> SimulationResponse:
     if payload.strategy == Strategy.custom and payload.order_quantity is None:
         raise HTTPException(
             status_code=400,
             detail="order_quantity is required when strategy is custom.",
         )
+    user_id, _ = auth
     result = run_monte_carlo_stable(
         strategy=payload.strategy,
         simulations=payload.simulations,
         custom_quantity=payload.order_quantity,
-        config=_config_from_request(payload),
+        config=_config_from_request(payload, user_id=user_id),
     )
     return SimulationResponse(**result)
 
@@ -1329,6 +1428,80 @@ Keep concise and practical."""
         rankings=rankings,
         ai_summary=ai_summary or "",
     )
+
+
+@api.get("/suppliers", response_model=list[SupplierResponse])
+def suppliers_list(
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> list:
+    user_id, _ = auth
+    return list_suppliers_for_user(user_id)
+
+
+@api.post("/suppliers", response_model=SupplierResponse)
+def suppliers_create(
+    payload: SupplierCreateRequest,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    user_id, _ = auth
+    return create_supplier(
+        user_id=user_id,
+        name=payload.name,
+        category=payload.category,
+        lat=payload.lat,
+        lng=payload.lng,
+        address=payload.address,
+        unit_price=payload.unit_price,
+        shipping_cost_per_km=payload.shipping_cost_per_km,
+        lead_time_days=payload.lead_time_days,
+    )
+
+
+@api.get("/suppliers/{supplier_id}", response_model=SupplierResponse)
+def suppliers_get(
+    supplier_id: int,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    user_id, _ = auth
+    supplier = get_supplier(supplier_id, user_id)
+    if supplier is None:
+        raise HTTPException(status_code=404, detail="Supplier not found.")
+    return supplier
+
+
+@api.put("/suppliers/{supplier_id}", response_model=SupplierResponse)
+def suppliers_update(
+    supplier_id: int,
+    payload: SupplierUpdateRequest,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    user_id, _ = auth
+    supplier = update_supplier(
+        supplier_id=supplier_id,
+        user_id=user_id,
+        name=payload.name,
+        category=payload.category,
+        lat=payload.lat,
+        lng=payload.lng,
+        address=payload.address,
+        unit_price=payload.unit_price,
+        shipping_cost_per_km=payload.shipping_cost_per_km,
+        lead_time_days=payload.lead_time_days,
+    )
+    if supplier is None:
+        raise HTTPException(status_code=404, detail="Supplier not found.")
+    return supplier
+
+
+@api.delete("/suppliers/{supplier_id}")
+def suppliers_delete(
+    supplier_id: int,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    user_id, _ = auth
+    if not delete_supplier(supplier_id, user_id):
+        raise HTTPException(status_code=404, detail="Supplier not found.")
+    return {"ok": True}
 
 
 @api.post("/auth/register", response_model=AuthResponse)

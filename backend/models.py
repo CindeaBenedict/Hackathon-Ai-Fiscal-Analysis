@@ -37,6 +37,7 @@ class SimulationRequest(BaseModel):
     demand_spike_multiplier: float = Field(default=1.5, ge=1)
     demand_drop_multiplier: float = Field(default=0.5, ge=0, le=1)
     production_loss_fraction: float = Field(default=0.2, ge=0, le=1)
+    current_brewery_id: Optional[int] = Field(default=None, ge=1)
 
 
 class SimulationResponse(BaseModel):
@@ -413,3 +414,38 @@ class BreweryCompareResponse(BaseModel):
     best_brewery_name: str
     rankings: List[BreweryComparisonItem]
     ai_summary: str
+
+
+class SupplierCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    category: Literal["bottles", "caps", "malt", "yeast", "ingredients", "water", "fuel", "other"]
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    address: Optional[str] = Field(default=None, max_length=256)
+    unit_price: float = Field(default=0, ge=0)
+    shipping_cost_per_km: float = Field(default=0, ge=0)
+    lead_time_days: int = Field(default=3, ge=0, le=90)
+
+
+class SupplierUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    category: Optional[Literal["bottles", "caps", "malt", "yeast", "ingredients", "water", "fuel", "other"]] = None
+    lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    lng: Optional[float] = Field(default=None, ge=-180, le=180)
+    address: Optional[str] = Field(default=None, max_length=256)
+    unit_price: Optional[float] = Field(default=None, ge=0)
+    shipping_cost_per_km: Optional[float] = Field(default=None, ge=0)
+    lead_time_days: Optional[int] = Field(default=None, ge=0, le=90)
+
+
+class SupplierResponse(BaseModel):
+    id: int
+    name: str
+    category: str
+    lat: float
+    lng: float
+    address: str
+    unit_price: float
+    shipping_cost_per_km: float
+    lead_time_days: int
+    created_at: str
