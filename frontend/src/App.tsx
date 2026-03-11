@@ -133,7 +133,9 @@ function App() {
       if (res.status === 401 || res.status === 403) {
         localStorage.removeItem("auth_token");
         localStorage.removeItem("auth_user");
+        bootstrapStarted.current = false;
         setAuthToken(null);
+        setBootstrapRetry((r) => r + 1);
       }
       return res;
     });
@@ -673,7 +675,9 @@ function App() {
             <SettingsPage authToken={authToken} apiBaseUrl={API_BASE_URL} onAuthError={() => {
               localStorage.removeItem("auth_token");
               localStorage.removeItem("auth_user");
+              bootstrapStarted.current = false;
               setAuthToken(null);
+              setBootstrapRetry((r) => r + 1);
             }} />
           ) : null}
         </div>
