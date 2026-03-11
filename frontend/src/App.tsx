@@ -45,6 +45,8 @@ function App() {
   const [logs, setLogs] = useState<FrontendLogEntry[]>([]);
   const [backendLogs, setBackendLogs] = useState<BackendAILog[]>([]);
   const [theoryReport, setTheoryReport] = useState<TheoryReport | null>(null);
+  const [comparisonResults, setComparisonResults] = useState<Record<string, SimulationResponse> | null>(null);
+  const [isComparing, setIsComparing] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(
     localStorage.getItem("auth_token"),
   );
@@ -275,6 +277,38 @@ function App() {
   function stopSimulation() {
     if (simulationAbortRef.current) {
       simulationAbortRef.current.abort();
+    }
+  }
+
+  async function compareStrategies() {
+    setIsComparing(true);
+    setComparisonResults(null);
+    const strategies = ["conservative", "balanced", "aggressive"] as const;
+    const results: Record<string, SimulationResponse> = {};
+    try {
+      for (const s of strategies) {
+        const payload = {
+          strategy: s,
+          simulations,
+          initial_cash: initialCash,
+          demand_std_dev: demandStdDev,
+          weekly_fixed_cost: weeklyFixedCost,
+          bankruptcy_cash_threshold: bankruptcyThreshold,
+          sale_price: salePrice,
+        };
+        const res = await authFetch(`${API_BASE_URL}/simulate/stable`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) continue;
+        results[s] = await res.json();
+      }
+      setComparisonResults(results);
+    } catch {
+      setError("Strategy comparison failed.");
+    } finally {
+      setIsComparing(false);
     }
   }
 
@@ -640,6 +674,76 @@ function App() {
                 apiBaseUrl={API_BASE_URL}
               />
               {error ? <p className="error">{error}</p> : null}
+
+              {/* ── Compare Strategies ──────────────────────────────────── */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  style={{ fontSize: "0.78rem" }}
+                  disabled={isComparing || isLoading}
+                  onClick={compareStrategies}
+                >
+                  {isComparing ? "Comparing…" : "Compare All Strategies"}
+                </button>
+                {isComparing && <span className="muted" style={{ fontSize: "0.75rem" }}>Running Conservative, Balanced, Aggressive…</span>}
+              </div>
+
+              {comparisonResults && Object.keys(comparisonResults).length > 0 && (
+                <section className="panel" style={{ overflowX: "auto" }}>
+                  <h2 style={{ marginBottom: 12 }}>Strategy Comparison</h2>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "2px solid var(--border)" }}>
+                        <th style={{ textAlign: "left", padding: "6px 10px", color: "var(--text-2)" }}>Metric</th>
+                        {Object.entries(comparisonResults).map(([s]) => (
+                          <th key={s} style={{ textAlign: "right", padding: "6px 10px", color: "var(--text-2)", textTransform: "capitalize" }}>{s}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {([
+                        ["Avg Profit", (r: SimulationResponse) => `$${r.avg_profit.toFixed(0)}`],
+                        ["Median (P50)", (r: SimulationResponse) => `$${(r.profit_p50 ?? 0).toFixed(0)}`],
+                        ["Worst Case", (r: SimulationResponse) => `$${r.worst_profit.toFixed(0)}`],
+                        ["Best Case", (r: SimulationResponse) => `$${r.best_profit.toFixed(0)}`],
+                        ["Std Dev", (r: SimulationResponse) => `$${(r.profit_std_dev ?? 0).toFixed(0)}`],
+                        ["Bankruptcy %", (r: SimulationResponse) => `${(r.bankruptcy_probability * 100).toFixed(1)}%`],
+                        ["Avg Stockouts", (r: SimulationResponse) => r.stockouts_average.toFixed(2)],
+                        ["Sharpe", (r: SimulationResponse) => r.sharpe_ratio != null ? r.sharpe_ratio.toFixed(3) : "—"],
+                        ["Service Level", (r: SimulationResponse) => r.avg_service_level != null ? `${(r.avg_service_level * 100).toFixed(1)}%` : "—"],
+                        ["Simulations", (r: SimulationResponse) => String(r.actual_simulations ?? r.profits.length)],
+                      ] as [string, (r: SimulationResponse) => string][]).map(([label, fmt]) => {
+                        const vals = Object.values(comparisonResults);
+                        const nums = vals.map((r) => {
+                          const s = fmt(r).replace(/[$,%]/g, "");
+                          return parseFloat(s);
+                        });
+                        const isBest = (idx: number) => {
+                          if (label.includes("Bankruptcy") || label === "Std Dev" || label === "Avg Stockouts" || label === "Worst Case")
+                            return nums[idx] === Math.min(...nums.filter((x) => !isNaN(x)));
+                          return nums[idx] === Math.max(...nums.filter((x) => !isNaN(x)));
+                        };
+                        return (
+                          <tr key={label} style={{ borderBottom: "1px solid var(--border)" }}>
+                            <td style={{ padding: "6px 10px", color: "var(--text-2)" }}>{label}</td>
+                            {Object.values(comparisonResults).map((r, i) => (
+                              <td key={i} style={{
+                                textAlign: "right", padding: "6px 10px",
+                                fontWeight: isBest(i) ? 700 : 400,
+                                color: isBest(i) ? "#22c55e" : "var(--text)",
+                              }}>
+                                {fmt(r)}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </section>
+              )}
+
               {results ? (
                 <AnalysisDashboard
                   key={`${results.actual_simulations ?? 0}-${results.avg_profit}-${results.profits.length}`}

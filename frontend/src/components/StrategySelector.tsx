@@ -191,6 +191,35 @@ function StrategySelector({
         </label>
       </div>
 
+      {/* ── Scenario presets ──────────────────────────────────────────── */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+        <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase",
+          letterSpacing: "0.07em", alignSelf: "center", marginRight: 4 }}>Quick scenario:</span>
+        {([
+          { label: "Stable market", cash: 5000, std: 15, fixed: 3000, price: 50, tip: "Low variance, healthy margins" },
+          { label: "Volatile demand", cash: 5000, std: 50, fixed: 3200, price: 50, tip: "High demand uncertainty" },
+          { label: "Cash-strapped", cash: 2000, std: 25, fixed: 3200, price: 50, tip: "Very tight cash buffer" },
+          { label: "Premium product", cash: 5000, std: 25, fixed: 4000, price: 80, tip: "High price, high overhead" },
+          { label: "Razor-thin margin", cash: 5000, std: 25, fixed: 3800, price: 42, tip: "Almost no profit margin" },
+        ] as const).map((sc) => (
+          <button
+            key={sc.label}
+            type="button"
+            title={sc.tip}
+            className="secondary-button"
+            style={{ fontSize: "0.72rem", padding: "4px 10px" }}
+            onClick={() => {
+              onInitialCashChange(sc.cash);
+              onDemandStdDevChange(sc.std);
+              onWeeklyFixedCostChange(sc.fixed);
+              onSalePriceChange(sc.price);
+            }}
+          >
+            {sc.label}
+          </button>
+        ))}
+      </div>
+
       <p style={{ fontSize: "0.73rem", color: "var(--text-2)", marginBottom: 16 }}>
         Order cost: $10/unit · Gross margin: ${grossMargin}/unit · {strategy === "ai_recommended" ? "Q from AI" : `${orderQty} units`} ordered/week
       </p>

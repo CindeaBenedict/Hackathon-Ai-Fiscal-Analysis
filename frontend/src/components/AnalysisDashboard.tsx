@@ -57,6 +57,45 @@ const $$ = (n: number) =>
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
+function downloadCSV(r: SimulationResults) {
+  const rows: string[][] = [
+    ["Metric", "Value"],
+    ["Average Profit", r.avg_profit.toFixed(2)],
+    ["Best Profit", r.best_profit.toFixed(2)],
+    ["Worst Profit", r.worst_profit.toFixed(2)],
+    ["Std Dev", (r.profit_std_dev ?? 0).toFixed(2)],
+    ["P05 (VaR 95%)", (r.profit_p05 ?? 0).toFixed(2)],
+    ["P10", (r.profit_p10 ?? 0).toFixed(2)],
+    ["P25", (r.profit_p25 ?? 0).toFixed(2)],
+    ["P50 (Median)", (r.profit_p50 ?? 0).toFixed(2)],
+    ["P75", (r.profit_p75 ?? 0).toFixed(2)],
+    ["P90", (r.profit_p90 ?? 0).toFixed(2)],
+    ["P95", (r.profit_p95 ?? 0).toFixed(2)],
+    ["CVaR 95%", (r.profit_cvar95 ?? 0).toFixed(2)],
+    ["Bankruptcy Probability", (r.bankruptcy_probability * 100).toFixed(2) + "%"],
+    ["Bankruptcy Count", String(r.bankruptcy_count)],
+    ["Avg Stockouts/Week", r.stockouts_average.toFixed(2)],
+    ["Sharpe Ratio", r.sharpe_ratio != null ? r.sharpe_ratio.toFixed(4) : "N/A"],
+    ["Sortino Ratio", r.sortino_ratio != null && isFinite(r.sortino_ratio) ? r.sortino_ratio.toFixed(4) : "N/A"],
+    ["Skewness", (r.profit_skewness ?? 0).toFixed(4)],
+    ["Kurtosis", (r.profit_kurtosis ?? 0).toFixed(4)],
+    ["Service Level", r.avg_service_level != null ? (r.avg_service_level * 100).toFixed(1) + "%" : "N/A"],
+    ["Avg Max Drawdown", (r.avg_max_drawdown ?? 0).toFixed(2)],
+    ["Simulations", String(r.actual_simulations ?? r.profits.length)],
+    [""],
+    ["Run", "Profit"],
+    ...r.profits.map((p, i) => [String(i + 1), p.toFixed(2)]),
+  ];
+  const csv = rows.map((r) => r.join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `simulation-results-${new Date().toISOString().slice(0, 16)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function StatRow({
   label,
   value,
@@ -265,6 +304,19 @@ export default function AnalysisDashboard({ results: r, chatMessages, isAiLoadin
               {r.profit_ci_half_width != null &&
                 ` · CI ±${$$(r.profit_ci_half_width)}`}
             </span>
+            <button
+              type="button"
+              onClick={() => downloadCSV(r)}
+              title="Export results to CSV"
+              style={{
+                border: "1px solid rgba(59,130,246,0.3)", borderRadius: "var(--r-xs)",
+                background: "rgba(59,130,246,0.08)", color: "#60a5fa",
+                fontSize: "0.62rem", fontWeight: 700, padding: "3px 8px",
+                cursor: "pointer", flexShrink: 0,
+              }}
+            >
+              Export CSV
+            </button>
           </div>
 
           <SectionLabel>Expected return</SectionLabel>
