@@ -25,6 +25,7 @@ type WorkspaceMember = {
 type CollaboratePageProps = {
   apiBaseUrl: string;
   authFetch: (url: string, init?: RequestInit) => Promise<Response>;
+  aiModel: string;
   currentWorkspace: Workspace | null;
   onCurrentWorkspaceChange: (ws: Workspace | null) => void;
   onLoadWorkspaceState?: (config: Record<string, unknown> | null, results: Record<string, unknown> | null) => void;
@@ -38,6 +39,7 @@ const STORAGE_KEY = "supply_chain_current_workspace_id";
 export default function CollaboratePage({
   apiBaseUrl,
   authFetch,
+  aiModel,
   currentWorkspace,
   onCurrentWorkspaceChange,
   onLoadWorkspaceState,
@@ -333,6 +335,8 @@ export default function CollaboratePage({
     try {
       const r = await authFetch(`${apiBaseUrl}/ai/workspaces/${currentWorkspace.id}/report`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: aiModel }),
       });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));

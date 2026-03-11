@@ -73,10 +73,19 @@ function App() {
   const [authBootstrapLoading, setAuthBootstrapLoading] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authUsernameInput, setAuthUsernameInput] = useState("");
+  const [authEmailInput, setAuthEmailInput] = useState("");
   const [authPasswordInput, setAuthPasswordInput] = useState("");
   const [authPasswordConfirmInput, setAuthPasswordConfirmInput] = useState("");
+  const [authShowForgot, setAuthShowForgot] = useState(false);
+  const [forgotUsernameInput, setForgotUsernameInput] = useState("");
+  const [forgotEmailInput, setForgotEmailInput] = useState("");
+  const [forgotResetTokenInput, setForgotResetTokenInput] = useState("");
+  const [forgotNewPasswordInput, setForgotNewPasswordInput] = useState("");
+  const [forgotConfirmPasswordInput, setForgotConfirmPasswordInput] = useState("");
+  const [generatedResetToken, setGeneratedResetToken] = useState<string>("");
   const bootstrapStarted = useRef(false);
   const simulationAbortRef = useRef<AbortController | null>(null);
+  const workspaceUpdatedAtRef = useRef<string | null>(null);
 
   function buildWorkspaceConfig() {
     return {
@@ -265,8 +274,16 @@ function App() {
       return;
     }
     if (authMode === "register") {
+      if (!authEmailInput.trim()) {
+        setError("Email is required.");
+        return;
+      }
       if (authPasswordInput.length < 8) {
         setError("Password must be at least 8 characters.");
+        return;
+      }
+      if (!/[A-Z]/.test(authPasswordInput) || !/[a-z]/.test(authPasswordInput) || !/[0-9]/.test(authPasswordInput) || !/[^A-Za-z0-9]/.test(authPasswordInput)) {
+        setError("Password must include uppercase, lowercase, number, and special character.");
         return;
       }
       if (authPasswordInput !== authPasswordConfirmInput) {
@@ -282,6 +299,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: authUsernameInput.trim(),
+          ...(authMode === "register" ? { email: authEmailInput.trim() } : {}),
           password: authPasswordInput,
         }),
       });
@@ -300,8 +318,97 @@ function App() {
       setSession(data);
       setAuthPasswordInput("");
       setAuthPasswordConfirmInput("");
+      setAuthEmailInput("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed.");
+    } finally {
+      setAuthBootstrapLoading(false);
+    }
+  }
+
+  async function requestPasswordReset() {
+    setError("");
+    if (!forgotUsernameInput.trim() && !forgotEmailInput.trim()) {
+      setError("Enter username or email.");
+      return;
+    }
+    setAuthBootstrapLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: forgotUsernameInput.trim() || undefined,
+          email: forgotEmailInput.trim() || undefined,
+        }),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+      const data = JSON.parse(text) as { message: string; reset_token?: string | null };
+      if (data.reset_token) {
+        setGeneratedResetToken(data.reset_token);
+        setForgotResetTokenInput(data.reset_token);
+      }
+      setError(data.message || "Reset token generated.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create reset token.");
+    } finally {
+      setAuthBootstrapLoading(false);
+    }
+  }
+
+  async function resetPassword() {
+    setError("");
+    if (!forgotResetTokenInput.trim()) {
+      setError("Enter the reset token.");
+      return;
+    }
+    if (forgotNewPasswordInput.length < 8) {
+      setError("New password must be at least 8 characters.");
+      return;
+    }
+    if (!/[A-Z]/.test(forgotNewPasswordInput) || !/[a-z]/.test(forgotNewPasswordInput) || !/[0-9]/.test(forgotNewPasswordInput) || !/[^A-Za-z0-9]/.test(forgotNewPasswordInput)) {
+      setError("New password must include uppercase, lowercase, number, and special character.");
+      return;
+    }
+    if (forgotNewPasswordInput !== forgotConfirmPasswordInput) {
+      setError("New passwords do not match.");
+      return;
+    }
+    setAuthBootstrapLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reset_token: forgotResetTokenInput.trim(),
+          new_password: forgotNewPasswordInput,
+        }),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        let detail = text;
+        try {
+          const d = JSON.parse(text) as { detail?: string };
+          detail = d.detail ?? detail;
+        } catch {
+          // ignore parse failure
+        }
+        throw new Error(detail || "Could not reset password.");
+      }
+      setError("Password reset successful. Sign in with your new password.");
+      setAuthShowForgot(false);
+      setAuthMode("login");
+      setAuthPasswordInput("");
+      setAuthPasswordConfirmInput("");
+      setForgotResetTokenInput("");
+      setForgotNewPasswordInput("");
+      setForgotConfirmPasswordInput("");
+      setGeneratedResetToken("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reset password.");
     } finally {
       setAuthBootstrapLoading(false);
     }
@@ -767,6 +874,40 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    if (!authToken || !currentWorkspace) return;
+    const workspaceId = currentWorkspace.id;
+    const pullWorkspace = async () => {
+      try {
+        const r = await authFetch(`${API_BASE_URL}/workspaces/${workspaceId}`);
+        if (!r.ok) return;
+        const data = (await r.json()) as Workspace & {
+          state?: {
+            config: Record<string, unknown> | null;
+            results: Record<string, unknown> | null;
+            updated_at: string;
+            updated_by: string | null;
+          } | null;
+        };
+        if (data.name !== currentWorkspace.name || data.description !== currentWorkspace.description) {
+          setCurrentWorkspace(data);
+        }
+        const updatedAt = data.state?.updated_at ?? null;
+        if (!updatedAt) return;
+        if (workspaceUpdatedAtRef.current === updatedAt) return;
+        workspaceUpdatedAtRef.current = updatedAt;
+        loadWorkspaceState(data.state?.config ?? null, data.state?.results ?? null);
+      } catch {
+        // ignore transient network errors
+      }
+    };
+    void pullWorkspace();
+    const interval = setInterval(() => {
+      void pullWorkspace();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [authToken, currentWorkspace?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!authToken) {
     return (
       <div className={darkMode ? "" : "theme-light"}>
@@ -778,46 +919,137 @@ function App() {
             <h2>Supply Chain Command</h2>
             <p>{authMode === "login" ? "Sign in to collaborate." : "Create an account for collaboration."}</p>
             {error ? <p className="error" style={{ marginTop: 8, marginBottom: 4 }}>{error}</p> : null}
-            <div style={{ display: "grid", gap: 8, width: "100%" }}>
-              <input
-                type="text"
-                placeholder="Username"
-                value={authUsernameInput}
-                onChange={(e) => setAuthUsernameInput(e.target.value)}
-              />
-              <input
-                type="password"
-                placeholder="Password"
-                value={authPasswordInput}
-                onChange={(e) => setAuthPasswordInput(e.target.value)}
-              />
-              {authMode === "register" ? (
+            {!authShowForgot ? (
+              <div style={{ display: "grid", gap: 8, width: "100%" }}>
+                <input
+                  type="text"
+                  placeholder="Username"
+                  value={authUsernameInput}
+                  onChange={(e) => setAuthUsernameInput(e.target.value)}
+                />
+                {authMode === "register" ? (
+                  <input
+                    type="email"
+                    placeholder="Email (secondary identity)"
+                    value={authEmailInput}
+                    onChange={(e) => setAuthEmailInput(e.target.value)}
+                  />
+                ) : null}
                 <input
                   type="password"
-                  placeholder="Confirm password"
-                  value={authPasswordConfirmInput}
-                  onChange={(e) => setAuthPasswordConfirmInput(e.target.value)}
+                  placeholder="Password"
+                  value={authPasswordInput}
+                  onChange={(e) => setAuthPasswordInput(e.target.value)}
                 />
-              ) : null}
-              <button
-                type="button"
-                className="primary-button"
-                disabled={authBootstrapLoading}
-                onClick={() => void submitAuth()}
-              >
-                {authBootstrapLoading ? "Please wait..." : authMode === "login" ? "Sign in" : "Create account"}
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  setAuthMode((m) => (m === "login" ? "register" : "login"));
-                  setError("");
-                }}
-              >
-                {authMode === "login" ? "Need an account? Register" : "Already have an account? Sign in"}
-              </button>
-            </div>
+                {authMode === "register" ? (
+                  <>
+                    <input
+                      type="password"
+                      placeholder="Confirm password"
+                      value={authPasswordConfirmInput}
+                      onChange={(e) => setAuthPasswordConfirmInput(e.target.value)}
+                    />
+                    <p className="muted" style={{ fontSize: "0.78rem" }}>
+                      Password must include uppercase, lowercase, number, and special character.
+                    </p>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={authBootstrapLoading}
+                  onClick={() => void submitAuth()}
+                >
+                  {authBootstrapLoading ? "Please wait..." : authMode === "login" ? "Sign in" : "Create account"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setAuthMode((m) => (m === "login" ? "register" : "login"));
+                    setError("");
+                  }}
+                >
+                  {authMode === "login" ? "Need an account? Register" : "Already have an account? Sign in"}
+                </button>
+                {authMode === "login" ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setAuthShowForgot(true);
+                      setError("");
+                    }}
+                  >
+                    Forgot password?
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 8, width: "100%" }}>
+                <input
+                  type="text"
+                  placeholder="Username (optional)"
+                  value={forgotUsernameInput}
+                  onChange={(e) => setForgotUsernameInput(e.target.value)}
+                />
+                <input
+                  type="email"
+                  placeholder="Email (optional)"
+                  value={forgotEmailInput}
+                  onChange={(e) => setForgotEmailInput(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={authBootstrapLoading}
+                  onClick={() => void requestPasswordReset()}
+                >
+                  Generate reset token
+                </button>
+                {generatedResetToken ? (
+                  <p className="muted" style={{ fontSize: "0.78rem", wordBreak: "break-all" }}>
+                    Reset token: {generatedResetToken}
+                  </p>
+                ) : null}
+                <input
+                  type="text"
+                  placeholder="Reset token"
+                  value={forgotResetTokenInput}
+                  onChange={(e) => setForgotResetTokenInput(e.target.value)}
+                />
+                <input
+                  type="password"
+                  placeholder="New password"
+                  value={forgotNewPasswordInput}
+                  onChange={(e) => setForgotNewPasswordInput(e.target.value)}
+                />
+                <input
+                  type="password"
+                  placeholder="Confirm new password"
+                  value={forgotConfirmPasswordInput}
+                  onChange={(e) => setForgotConfirmPasswordInput(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={authBootstrapLoading}
+                  onClick={() => void resetPassword()}
+                >
+                  Reset password
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setAuthShowForgot(false);
+                    setError("");
+                  }}
+                >
+                  Back to sign in
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -844,12 +1076,7 @@ function App() {
           <div className="topbar-brand">
             <div className="topbar-brand-row">
               <img src="/logo.png" alt="" className="topbar-logo" />
-            <span className="topbar-title">Supply Chain Command</span>
             </div>
-            <span className="topbar-sub">
-              {currentBrewery ? `${currentBrewery.name} · ` : ""}
-              Monte Carlo · AI Planning · Risk Analysis
-            </span>
           </div>
           <div className="topbar-right">
             <span className="user-chip">@{username || "guest"}</span>
@@ -1046,6 +1273,7 @@ function App() {
             <CollaboratePage
               apiBaseUrl={API_BASE_URL}
               authFetch={authFetch}
+              aiModel={aiModel}
               currentWorkspace={currentWorkspace}
               onCurrentWorkspaceChange={setCurrentWorkspace}
               onLoadWorkspaceState={loadWorkspaceState}

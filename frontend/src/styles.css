@@ -67,6 +67,7 @@ body {
   gap: 4px;
   flex-shrink: 0;
   z-index: 20;
+  display: none;
 }
 
 .rail-logo {
@@ -180,9 +181,9 @@ body {
 .user-chip {
   font-size: 0.8rem;
   font-weight: 500;
-  color: var(--text-2);
-  background: var(--s1);
-  border: 1px solid var(--border);
+  color: var(--text);
+  background: var(--s2);
+  border: 1px solid rgba(96,165,250,0.35);
   border-radius: 999px;
   padding: 3px 12px;
 }
@@ -502,7 +503,7 @@ select option { background: var(--s1); }
   font-size: 0.84rem;
 }
 .success { color: var(--success); font-size: 0.84rem; }
-.muted { color: var(--text-2); font-size: 0.84rem; }
+.muted { color: #9fb3d1; font-size: 0.84rem; }
 
 /* ─── Splash / loading screen ─────────────────────────────────────────────── */
 .splash-screen {
@@ -717,8 +718,8 @@ select option { background: var(--s1); }
 }
 .brewery-item:hover { background: var(--s1); }
 .brewery-item.selected {
-  background: var(--accent-bg);
-  border-color: var(--accent);
+  background: rgba(30,41,59,0.82);
+  border-color: rgba(96,165,250,0.7);
 }
 .brewery-item-btn {
   flex: 1;
@@ -733,6 +734,7 @@ select option { background: var(--s1); }
   gap: 2px;
 }
 .brewery-item-btn strong { font-size: 0.9rem; }
+.brewery-item-btn strong { color: #e8f1ff; }
 .brewery-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 /* ─── Collaborate rich editor ─────────────────────────────────────────────── */

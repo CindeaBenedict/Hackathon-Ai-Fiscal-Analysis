@@ -24,7 +24,18 @@ from ai_agent import (
     provider_status,
     pull_model,
 )
-from auth import get_api_key, init_auth_db, login_user, logout_user, register_user, set_api_key, validate_token, get_user_from_token
+from auth import (
+    create_password_reset,
+    get_api_key,
+    init_auth_db,
+    login_user,
+    logout_user,
+    register_user,
+    reset_password_with_token,
+    set_api_key,
+    validate_token,
+    get_user_from_token,
+)
 from data_ingest import (
     parse_csv_bytes,
     parse_excel_bytes,
@@ -40,6 +51,9 @@ from models import (
     AIKeysResponse,
     AIKeysUpdateRequest,
     AuthLoginRequest,
+    AuthForgotPasswordRequest,
+    AuthForgotPasswordResponse,
+    AuthResetPasswordRequest,
     AuthRegisterRequest,
     AuthResponse,
     AIOrderAdviceRequest,
@@ -62,6 +76,7 @@ from models import (
     TheoryReportRequest,
     TheoryReportResponse,
     WorkspaceCreateRequest,
+    WorkspaceAIReportRequest,
     WorkspaceDescriptionUpdateRequest,
     WorkspaceAIReportResponse,
     WorkspaceJoinRequest,
@@ -1013,6 +1028,7 @@ def workspace_export_csv(
 @api.post("/ai/workspaces/{workspace_id}/report", response_model=WorkspaceAIReportResponse)
 def workspace_ai_report(
     workspace_id: int,
+    payload: WorkspaceAIReportRequest,
     auth: tuple[int, str] = Depends(require_auth_user),
 ) -> WorkspaceAIReportResponse:
     """Generate an AI report for the current workspace state."""
@@ -1061,7 +1077,7 @@ Write:
 4) Recommended next actions (5 bullets)
 Keep it practical and specific."""
 
-    model = "llama3.2:1b"
+    model = (payload.model or os.getenv("DEFAULT_MODEL", "llama3.2:1b")).strip() or "llama3.2:1b"
     report, err, _ = _timed_ai_call("ai.workspace.report", model, prompt, max_tokens=900)
     if err:
         raise HTTPException(status_code=503, detail=err)
@@ -1275,9 +1291,11 @@ Keep concise and practical."""
 @api.post("/auth/register", response_model=AuthResponse)
 def auth_register(payload: AuthRegisterRequest) -> AuthResponse:
     try:
-        register_user(payload.username, payload.password)
+        register_user(payload.username, payload.password, payload.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception:
-        raise HTTPException(status_code=400, detail="Username already exists.")
+        raise HTTPException(status_code=400, detail="Username or email already exists.")
     token = login_user(payload.username, payload.password)
     if token is None:
         raise HTTPException(status_code=500, detail="Registration failed.")
@@ -1292,6 +1310,33 @@ def auth_login(payload: AuthLoginRequest) -> AuthResponse:
     return AuthResponse(token=token, username=payload.username)
 
 
+@api.post("/auth/forgot-password", response_model=AuthForgotPasswordResponse)
+def auth_forgot_password(payload: AuthForgotPasswordRequest) -> AuthForgotPasswordResponse:
+    token, ttl = create_password_reset(payload.username, payload.email)
+    if not token:
+        return AuthForgotPasswordResponse(
+            message="If the account exists, a reset token has been generated.",
+            reset_token=None,
+            expires_in_minutes=ttl,
+        )
+    return AuthForgotPasswordResponse(
+        message="Password reset token generated. Keep it secure.",
+        reset_token=token,
+        expires_in_minutes=ttl,
+    )
+
+
+@api.post("/auth/reset-password")
+def auth_reset_password(payload: AuthResetPasswordRequest) -> dict:
+    try:
+        ok = reset_password_with_token(payload.reset_token.strip(), payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token.")
+    return {"ok": True}
+
+
 @api.post("/auth/logout")
 def auth_logout(authorization: str | None = Header(default=None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
@@ -1304,7 +1349,7 @@ def auth_logout(authorization: str | None = Header(default=None)) -> dict:
 @api.post("/auth/guest", response_model=AuthResponse)
 def auth_guest() -> AuthResponse:
     guest_username = f"guest_{secrets.token_hex(4)}"
-    guest_password = "guest-pass-1234"
+    guest_password = "Guest-pass-1234!"
     try:
         register_user(guest_username, guest_password)
     except Exception:

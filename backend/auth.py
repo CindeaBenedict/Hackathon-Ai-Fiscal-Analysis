@@ -4,10 +4,12 @@ import secrets
 import sqlite3
 import sys
 from datetime import datetime, timedelta
+import re
 
 
 DB_PATH = os.getenv("AUTH_DB_PATH", "auth.db")
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "24"))
+RESET_TOKEN_TTL_MINUTES = int(os.getenv("RESET_TOKEN_TTL_MINUTES", "30"))
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -38,10 +40,23 @@ def init_auth_db() -> None:
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
+                email TEXT,
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
+            """
+        )
+        user_cols = {
+            str(r["name"]) for r in conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "email" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
+            ON users(email)
+            WHERE email IS NOT NULL AND email <> ''
             """
         )
         conn.execute(
@@ -71,6 +86,18 @@ def init_auth_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS password_resets (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+            """
+        )
         conn.commit()
 
 
@@ -83,13 +110,37 @@ def _hash_password(password: str, salt: str) -> str:
     ).hex()
 
 
-def register_user(username: str, password: str) -> None:
+def _is_valid_email(email: str) -> bool:
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email))
+
+
+def validate_password_strength(password: str) -> str | None:
+    if len(password) < 8:
+        return "Password must be at least 8 characters."
+    if not re.search(r"[A-Z]", password):
+        return "Password must include at least one uppercase letter."
+    if not re.search(r"[a-z]", password):
+        return "Password must include at least one lowercase letter."
+    if not re.search(r"[0-9]", password):
+        return "Password must include at least one number."
+    if not re.search(r"[^A-Za-z0-9]", password):
+        return "Password must include at least one special character."
+    return None
+
+
+def register_user(username: str, password: str, email: str | None = None) -> None:
+    email_value = (email or "").strip().lower()
+    if email_value and not _is_valid_email(email_value):
+        raise ValueError("Invalid email format.")
+    password_error = validate_password_strength(password)
+    if password_error:
+        raise ValueError(password_error)
     salt = secrets.token_hex(16)
     hashed = _hash_password(password, salt)
     with _get_conn() as conn:
         conn.execute(
-            "INSERT INTO users(username, password_hash, salt, created_at) VALUES (?, ?, ?, ?)",
-            (username, hashed, salt, datetime.utcnow().isoformat()),
+            "INSERT INTO users(username, email, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?)",
+            (username, email_value or None, hashed, salt, datetime.utcnow().isoformat()),
         )
         conn.commit()
 
@@ -176,6 +227,87 @@ def logout_user(token: str) -> None:
             (datetime.utcnow().isoformat(), token),
         )
         conn.commit()
+
+
+def create_password_reset(username: str | None = None, email: str | None = None) -> tuple[str | None, int]:
+    username_value = (username or "").strip()
+    email_value = (email or "").strip().lower()
+    if not username_value and not email_value:
+        return (None, RESET_TOKEN_TTL_MINUTES)
+
+    with _get_conn() as conn:
+        clauses = []
+        params: list[object] = []
+        if username_value:
+            clauses.append("username = ?")
+            params.append(username_value)
+        if email_value:
+            clauses.append("email = ?")
+            params.append(email_value)
+        row = conn.execute(
+            f"SELECT id FROM users WHERE {' OR '.join(clauses)} LIMIT 1",
+            tuple(params),
+        ).fetchone()
+        if row is None:
+            return (None, RESET_TOKEN_TTL_MINUTES)
+        user_id = int(row["id"])
+        now = datetime.utcnow()
+        expires_at = (now + timedelta(minutes=RESET_TOKEN_TTL_MINUTES)).isoformat()
+        token = secrets.token_urlsafe(24)
+        conn.execute(
+            """
+            INSERT INTO password_resets(token, user_id, created_at, expires_at, used_at)
+            VALUES (?, ?, ?, ?, NULL)
+            """,
+            (token, user_id, now.isoformat(), expires_at),
+        )
+        conn.execute(
+            """
+            DELETE FROM password_resets
+            WHERE user_id = ?
+              AND (used_at IS NOT NULL OR expires_at <= ?)
+            """,
+            (user_id, now.isoformat()),
+        )
+        conn.commit()
+        return (token, RESET_TOKEN_TTL_MINUTES)
+
+
+def reset_password_with_token(reset_token: str, new_password: str) -> bool:
+    password_error = validate_password_strength(new_password)
+    if password_error:
+        raise ValueError(password_error)
+    now_iso = datetime.utcnow().isoformat()
+    with _get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT token, user_id
+            FROM password_resets
+            WHERE token = ?
+              AND used_at IS NULL
+              AND expires_at > ?
+            """,
+            (reset_token, now_iso),
+        ).fetchone()
+        if row is None:
+            return False
+        user_id = int(row["user_id"])
+        salt = secrets.token_hex(16)
+        hashed = _hash_password(new_password, salt)
+        conn.execute(
+            "UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+            (hashed, salt, user_id),
+        )
+        conn.execute(
+            "UPDATE password_resets SET used_at = ? WHERE token = ?",
+            (now_iso, reset_token),
+        )
+        conn.execute(
+            "UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+            (now_iso, user_id),
+        )
+        conn.commit()
+    return True
 
 
 def get_api_key(key_name: str) -> str | None:

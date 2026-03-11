@@ -228,12 +228,29 @@ class SimChatResponse(BaseModel):
 
 class AuthRegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=64)
+    email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=8, max_length=256)
 
 
 class AuthLoginRequest(BaseModel):
     username: str
     password: str
+
+
+class AuthForgotPasswordRequest(BaseModel):
+    username: Optional[str] = Field(default=None, min_length=3, max_length=64)
+    email: Optional[str] = Field(default=None, min_length=5, max_length=254)
+
+
+class AuthForgotPasswordResponse(BaseModel):
+    message: str
+    reset_token: Optional[str] = None
+    expires_in_minutes: Optional[int] = None
+
+
+class AuthResetPasswordRequest(BaseModel):
+    reset_token: str = Field(min_length=12, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)
 
 
 class AuthResponse(BaseModel):
@@ -316,6 +333,10 @@ class WorkspaceStateUpdateRequest(BaseModel):
 
 class WorkspaceDescriptionUpdateRequest(BaseModel):
     description: Optional[str] = Field(default=None, max_length=12000)
+
+
+class WorkspaceAIReportRequest(BaseModel):
+    model: Optional[str] = Field(default=None)
 
 
 class WorkspaceAIReportResponse(BaseModel):
