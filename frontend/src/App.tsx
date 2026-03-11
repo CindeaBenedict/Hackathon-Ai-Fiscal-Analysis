@@ -1,43 +1,34 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import DataChatPage, { ChatMessage } from "./components/DataChatPage";
-import DataUploadPage, { DataFileSummary } from "./components/DataUploadPage";
 import LogsPage, { BackendAILog, FrontendLogEntry } from "./components/LogsPage";
 import AnalysisDashboard, { SimChatMessage, SimulationResults } from "./components/AnalysisDashboard";
-import StrategySelector, { AnalysisMode, Strategy } from "./components/StrategySelector";
+import StrategySelector, { Strategy } from "./components/StrategySelector";
 import TheoryPage, { TheoryReport } from "./components/TheoryPage";
 import SettingsPage from "./components/SettingsPage";
 
 type SimulationResponse = SimulationResults;
-
-
-type DataChatResponse = {
-  model: string;
-  answer: string;
-};
 
 type AuthResponse = {
   token: string;
   username: string;
 };
 
-type ProcessFileResponse = {
-  file_id: string;
-  inferred_mapping: Record<string, unknown>;
-  processed_row_count: number;
-  processed_sample_rows: Record<string, unknown>[];
-  ai_notes?: string;
-};
-
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
+
+const DEFAULT_ORDER_BY_STRATEGY: Record<Strategy, number> = {
+  conservative: 120,
+  balanced: 100,
+  aggressive: 80,
+  custom: 100,
+  ai_recommended: 100,
+};
 
 function App() {
   const [activePage, setActivePage] = useState<
-    "dashboard" | "logs" | "dataUpload" | "dataChat" | "theory" | "settings"
+    "dashboard" | "logs" | "theory" | "settings"
   >("dashboard");
   const [darkMode, setDarkMode] = useState(true);
   const [strategy, setStrategy] = useState<Strategy>("custom");
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("monte_carlo_and_ai");
-  const [customOrderQuantity, setCustomOrderQuantity] = useState<number>(120);
+  const [customOrderQuantity, setCustomOrderQuantity] = useState<number>(100);
   const [simulations, setSimulations] = useState<number>(500);
   const [initialCash, setInitialCash] = useState<number>(5000);
   const [demandStdDev, setDemandStdDev] = useState<number>(25);
@@ -46,17 +37,13 @@ function App() {
   const [salePrice, setSalePrice] = useState<number>(50);
   const [aiModel, setAiModel] = useState<string>("llama3.2:1b");
   const [isLoading, setIsLoading] = useState(false);
-  const [isAiLoading, setIsAiLoading] = useState(false);
   const [isTheoryLoading, setIsTheoryLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [results, setResults] = useState<SimulationResponse | null>(null);
-  const [aiSummary, setAiSummary] = useState<string | null>(null);
-  const [aiProfits, setAiProfits] = useState<number[] | null>(null);
   const [simChat, setSimChat] = useState<SimChatMessage[]>([]);
+  const [isAiLoading, setIsAiLoading] = useState(false);
   const [logs, setLogs] = useState<FrontendLogEntry[]>([]);
   const [backendLogs, setBackendLogs] = useState<BackendAILog[]>([]);
-  const [dataFiles, setDataFiles] = useState<DataFileSummary[]>([]);
-  const [dataChatMessages, setDataChatMessages] = useState<ChatMessage[]>([]);
   const [theoryReport, setTheoryReport] = useState<TheoryReport | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(
     localStorage.getItem("auth_token"),
@@ -64,11 +51,9 @@ function App() {
   const [username, setUsername] = useState<string>(localStorage.getItem("auth_user") || "");
   const [authBootstrapLoading, setAuthBootstrapLoading] = useState(false);
   const bootstrapStarted = useRef(false);
-  const [processedByFile, setProcessedByFile] = useState<
-    Record<string, { inferred_mapping: Record<string, unknown>; ai_notes?: string }>
-  >({});
+  const simulationAbortRef = useRef<AbortController | null>(null);
   const railItems: Array<{
-    id: "dashboard" | "logs" | "dataUpload" | "dataChat" | "theory" | "settings";
+    id: "dashboard" | "logs" | "theory" | "settings";
     title: string;
     icon: React.ReactNode;
   }> = [
@@ -93,26 +78,6 @@ function App() {
           <line x1="10" y1="14" x2="16" y2="14" />
           <line x1="10" y1="10" x2="16" y2="10" />
           <line x1="10" y1="6"  x2="16" y2="6" />
-        </svg>
-      ),
-    },
-    {
-      id: "dataUpload",
-      title: "Data Upload",
-      icon: (
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
-          <path d="M10 12V4" />
-          <polyline points="7,7 10,4 13,7" />
-          <path d="M4 14v2a1 1 0 001 1h10a1 1 0 001-1v-2" />
-        </svg>
-      ),
-    },
-    {
-      id: "dataChat",
-      title: "Data Chat",
-      icon: (
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
-          <path d="M3 5a2 2 0 012-2h10a2 2 0 012 2v7a2 2 0 01-2 2H8l-4 3V5z" />
         </svg>
       ),
     },
@@ -166,26 +131,74 @@ function App() {
     return fetch(url, { ...init, headers });
   }
 
-  function logout() {
-    setAuthToken(null);
-    setUsername("");
-    localStorage.removeItem("auth_token");
-    localStorage.removeItem("auth_user");
-  }
-
   async function runSimulation() {
-    if (!canSimulate) {
+    if (!canSimulate && strategy !== "ai_recommended") {
       setError("Please provide valid simulation settings.");
       return;
     }
+    if (strategy === "ai_recommended" && simulations < 1) {
+      setError("Please set simulations to at least 1.");
+      return;
+    }
+
+    const controller = new AbortController();
+    simulationAbortRef.current = controller;
 
     try {
       setError("");
       setIsLoading(true);
 
+      let effectiveStrategy: Strategy = strategy;
+      let effectiveOrderQuantity: number | undefined =
+        strategy === "custom" ? customOrderQuantity : undefined;
+
+      if (strategy === "ai_recommended") {
+        const recommendRes = await authFetch(`${API_BASE_URL}/ai/recommend-order-for-simulation`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: aiModel,
+            baseline_demand: 100,
+            demand_std_dev: demandStdDev,
+            initial_cash: initialCash,
+            initial_inventory: 150,
+            sale_price: salePrice,
+            order_cost: 10,
+            holding_cost: 2,
+            stockout_penalty: 25,
+            weekly_fixed_cost: weeklyFixedCost,
+            bankruptcy_cash_threshold: bankruptcyThreshold,
+            weeks: 12,
+          }),
+        });
+        if (!recommendRes.ok) {
+          const text = await recommendRes.text();
+          pushLog({
+            action: "ai.recommend_order.failed",
+            request: {},
+            error: text,
+            level: "error",
+          });
+          throw new Error(`AI recommendation failed: ${text}`);
+        }
+        const recommendData = (await recommendRes.json()) as {
+          recommended_order_quantity: number;
+          model: string;
+        };
+        effectiveOrderQuantity = recommendData.recommended_order_quantity;
+        setCustomOrderQuantity(recommendData.recommended_order_quantity);
+        effectiveStrategy = "custom";
+        pushLog({
+          action: "ai.recommend_order.success",
+          request: { model: aiModel },
+          response: recommendData,
+          level: "info",
+        });
+      }
+
       const requestPayload = {
-        strategy,
-        order_quantity: strategy === "custom" ? customOrderQuantity : undefined,
+        strategy: effectiveStrategy,
+        order_quantity: effectiveStrategy === "custom" ? effectiveOrderQuantity : undefined,
         simulations,
         initial_cash: initialCash,
         demand_std_dev: demandStdDev,
@@ -199,6 +212,7 @@ function App() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(requestPayload),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -215,8 +229,6 @@ function App() {
       const data: SimulationResponse = await response.json();
       setResults(data);
       setSimChat([]);
-      setAiSummary(null);
-      setAiProfits(null);
       pushLog({
         action: "simulation.completed",
         request: requestPayload,
@@ -231,80 +243,80 @@ function App() {
         level: "success",
       });
 
-      // When "Monte Carlo + AI": run AI advisor and show summary (color-coded in chart)
-      if (analysisMode !== "monte_carlo_and_ai") {
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        setIsAiLoading(true);
-        const advisorPayload = {
-          ...requestPayload,
-          model: aiModel,
-        };
-        const advisorRes = await authFetch(`${API_BASE_URL}/ai/advisor`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(advisorPayload),
+      // Initial AI analysis from the math results (non-blocking)
+      fetchInitialAdvisorSummary(data);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        setError("Simulation stopped.");
+        pushLog({
+          action: "simulation.stopped",
+          request: {},
+          level: "info",
         });
-        if (advisorRes.ok) {
-          const advisorData = await advisorRes.json();
-          const summary = advisorData.summary || "No summary generated.";
-          setAiSummary(summary);
-          setSimChat([
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: summary,
-            },
-          ]);
-          // AI Monte Carlo: get AI's own profit distribution to plot alongside math
-          try {
-            const distRes = await authFetch(`${API_BASE_URL}/ai/advisor-distribution`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(advisorPayload),
-            });
-            if (distRes.ok) {
-              const distData = await distRes.json();
-              setAiProfits(distData.profits ?? null);
-            } else {
-              setAiProfits(null);
-            }
-          } catch {
-            setAiProfits(null);
-          }
-        } else {
-          const errText = await advisorRes.text();
-          setAiSummary(null);
-          setAiProfits(null);
-          setSimChat([
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: `AI advisor could not run: ${errText || advisorRes.status}. You can still ask questions in the chat.`,
-            },
-          ]);
-        }
-      } catch (advisorErr) {
-        setAiSummary(null);
-        setAiProfits(null);
+      } else {
+        setError(err instanceof Error ? err.message : "Unknown error.");
+      }
+    } finally {
+      setIsLoading(false);
+      simulationAbortRef.current = null;
+    }
+  }
+
+  function stopSimulation() {
+    if (simulationAbortRef.current) {
+      simulationAbortRef.current.abort();
+    }
+  }
+
+  function fetchInitialAdvisorSummary(simData: SimulationResponse) {
+    setSimChat([
+      {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "Analyzing results…",
+      },
+    ]);
+    const payload = {
+      model: aiModel,
+      strategy,
+      simulations: simData.actual_simulations ?? simulations,
+      avg_profit: simData.avg_profit,
+      profit_p10: simData.profit_p10 ?? undefined,
+      profit_p50: simData.profit_p50 ?? undefined,
+      profit_p90: simData.profit_p90 ?? undefined,
+      worst_profit: simData.worst_profit,
+      best_profit: simData.best_profit,
+      bankruptcy_probability: simData.bankruptcy_probability,
+      bankruptcy_count: simData.bankruptcy_count,
+      stockouts_average: simData.stockouts_average,
+    };
+    authFetch(`${API_BASE_URL}/ai/advisor-summary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then((res) => {
+        if (!res.ok) return res.text().then((t) => Promise.reject(new Error(t)));
+        return res.json() as Promise<{ model: string; summary: string }>;
+      })
+      .then((body) => {
         setSimChat([
           {
             id: crypto.randomUUID(),
             role: "assistant",
-            content: `AI advisor unavailable: ${advisorErr instanceof Error ? advisorErr.message : "network error"}. You can still ask questions below.`,
+            content: body.summary || "No summary generated.",
           },
         ]);
-      } finally {
-        setIsAiLoading(false);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error.");
-    } finally {
-      setIsLoading(false);
-    }
+      })
+      .catch(() => {
+        setSimChat([
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "Initial analysis could not be loaded. You can ask a question below.",
+          },
+        ]);
+      });
   }
 
   async function sendSimChat(message: string, latestResults?: SimulationResponse) {
@@ -359,7 +371,7 @@ function App() {
         const errMsg: SimChatMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: `⚠ Could not reach AI: ${text}`,
+          content: `Could not reach AI: ${text}`,
         };
         setSimChat((prev) => [...prev, errMsg]);
         return;
@@ -377,7 +389,7 @@ function App() {
       const errMsg: SimChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: `⚠ Error: ${err instanceof Error ? err.message : "Unknown error"}`,
+        content: `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
       };
       setSimChat((prev) => [...prev, errMsg]);
     } finally {
@@ -399,81 +411,6 @@ function App() {
   async function clearBackendLogs() {
     await authFetch(`${API_BASE_URL}/ai/logs`, { method: "DELETE" });
     setBackendLogs([]);
-  }
-
-  async function refreshDataFiles() {
-    const response = await authFetch(`${API_BASE_URL}/data/files`);
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    const data = (await response.json()) as DataFileSummary[];
-    setDataFiles(data);
-  }
-
-  async function uploadDataFile(file: File) {
-    const formData = new FormData();
-    formData.append("file", file);
-    const response = await authFetch(`${API_BASE_URL}/data/upload`, {
-      method: "POST",
-      body: formData,
-    });
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    await refreshDataFiles();
-    pushLog({
-      action: "data.upload.success",
-      request: { file: file.name },
-      response: await response.json(),
-      level: "success",
-    });
-  }
-
-  async function clearDataFiles() {
-    await authFetch(`${API_BASE_URL}/data/files`, { method: "DELETE" });
-    setDataFiles([]);
-    setProcessedByFile({});
-  }
-
-  async function sendDataChat(message: string) {
-    const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: message,
-      timestamp: new Date().toISOString(),
-    };
-    setDataChatMessages((prev) => [...prev, userMessage]);
-
-    const payload = { message, model: aiModel };
-    const response = await authFetch(`${API_BASE_URL}/ai/data-chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      pushLog({
-        action: "ai.data_chat.failed",
-        request: payload,
-        error: text,
-        level: "error",
-      });
-      throw new Error(text);
-    }
-    const data = (await response.json()) as DataChatResponse;
-    const aiMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      content: data.answer,
-      timestamp: new Date().toISOString(),
-    };
-    setDataChatMessages((prev) => [...prev, aiMessage]);
-    pushLog({
-      action: "ai.data_chat.success",
-      request: payload,
-      response: data,
-      level: "info",
-    });
   }
 
   async function generateTheoryReport() {
@@ -560,47 +497,6 @@ function App() {
     }
   }, [activePage, authToken]);
 
-  useEffect(() => {
-    if (!authToken) {
-      return;
-    }
-    if (activePage === "dataUpload") {
-      void refreshDataFiles();
-    }
-  }, [activePage, authToken]);
-
-  async function processUploadedFile(fileId: string) {
-    try {
-      const response = await authFetch(`${API_BASE_URL}/ai/process-file/${fileId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: aiModel }),
-      });
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      const data = (await response.json()) as ProcessFileResponse;
-      setProcessedByFile((prev) => ({
-        ...prev,
-        [fileId]: { inferred_mapping: data.inferred_mapping, ai_notes: data.ai_notes },
-      }));
-      pushLog({
-        action: "ai.process_file.success",
-        request: { file_id: fileId, model: aiModel },
-        response: data,
-        level: "success",
-      });
-    } catch (err) {
-      pushLog({
-        action: "ai.process_file.failed",
-        request: { file_id: fileId, model: aiModel },
-        error: err instanceof Error ? err.message : "Processing failed",
-        level: "error",
-      });
-      setError(err instanceof Error ? err.message : "Failed to process file.");
-    }
-  }
-
   if (!authToken) {
     return (
       <div className={darkMode ? "" : "theme-light"}>
@@ -649,8 +545,6 @@ function App() {
           </div>
           <div className="topbar-right">
             <span className="status-pill">LIVE</span>
-            <span className="user-chip">{username}</span>
-            <button className="secondary-button" onClick={logout}>Sign out</button>
             <button className="secondary-button" onClick={() => setDarkMode((v) => !v)}>
               {darkMode ? "Light" : "Dark"}
             </button>
@@ -674,7 +568,6 @@ function App() {
             <>
               <StrategySelector
                 strategy={strategy}
-                analysisMode={analysisMode}
                 customOrderQuantity={customOrderQuantity}
                 simulations={simulations}
                 initialCash={initialCash}
@@ -683,8 +576,12 @@ function App() {
                 bankruptcyThreshold={bankruptcyThreshold}
                 salePrice={salePrice}
                 aiModel={aiModel}
-                onStrategyChange={setStrategy}
-                onAnalysisModeChange={setAnalysisMode}
+                onStrategyChange={(s) => {
+                  setStrategy(s);
+                  if (s !== "custom") {
+                    setCustomOrderQuantity(DEFAULT_ORDER_BY_STRATEGY[s]);
+                  }
+                }}
                 onCustomOrderQuantityChange={setCustomOrderQuantity}
                 onSimulationsChange={setSimulations}
                 onInitialCashChange={setInitialCash}
@@ -694,16 +591,15 @@ function App() {
                 onSalePriceChange={setSalePrice}
                 onAiModelChange={setAiModel}
                 onSimulate={runSimulation}
+                onStop={stopSimulation}
                 isLoading={isLoading}
               />
               {error ? <p className="error">{error}</p> : null}
               {results ? (
                 <AnalysisDashboard
+                  key={`${results.actual_simulations ?? 0}-${results.avg_profit}-${results.profits.length}`}
                   results={results}
                   chatMessages={simChat}
-                  aiSummary={aiSummary}
-                  aiProfits={aiProfits}
-                  analysisMode={analysisMode}
                   isAiLoading={isAiLoading}
                   aiModel={aiModel}
                   onSendMessage={(msg) => void sendSimChat(msg)}
@@ -719,26 +615,6 @@ function App() {
               onClearLocal={() => setLogs([])}
               onClearBackend={clearBackendLogs}
               onRefreshBackend={loadBackendLogs}
-            />
-          ) : null}
-
-          {activePage === "dataUpload" ? (
-            <DataUploadPage
-              files={dataFiles}
-              processedByFile={processedByFile}
-              onUpload={uploadDataFile}
-              onRefresh={refreshDataFiles}
-              onClear={clearDataFiles}
-              onProcessFile={processUploadedFile}
-            />
-          ) : null}
-
-          {activePage === "dataChat" ? (
-            <DataChatPage
-              messages={dataChatMessages}
-              model={aiModel}
-              onModelChange={setAiModel}
-              onSend={sendDataChat}
             />
           ) : null}
 

@@ -434,6 +434,12 @@ select option { background: var(--s1); }
   white-space: pre-wrap;
   color: var(--text);
 }
+.chat-form {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.chat-form input { flex: 1; min-width: 0; }
 
 /* ─── Upload ──────────────────────────────────────────────────────────────── */
 .upload-box {
@@ -544,10 +550,82 @@ select option { background: var(--s1); }
 .theme-light .primary-button { background: #2563eb; }
 
 /* ─── Responsive ──────────────────────────────────────────────────────────── */
+/* Dashboard: two-column row (Math | AI) stacks on narrow */
+.dashboard-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+/* Strategy header: title + margin pill stack on narrow */
+.strategy-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.strategy-header-row h2 { margin: 0; }
+/* Theory: two-chart row and factor row stack on narrow */
+.theory-charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.theory-factor-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0 16px;
+  align-items: start;
+}
+
 @media (max-width: 840px) {
   .side-rail   { display: none; }
   .content-area { max-width: 100vw; }
   .topbar      { padding: 0 16px; }
   .nav-tabs    { padding: 0 12px; }
   .page-body   { padding: 14px 16px; }
+  .topbar-brand { min-width: 0; }
+  .topbar-sub  { display: none; }
+}
+
+@media (max-width: 768px) {
+  .dashboard-two-col { grid-template-columns: 1fr; }
+  .theory-charts-row { grid-template-columns: 1fr; }
+  .theory-factor-row {
+    grid-template-columns: 1fr;
+    gap: 8px 0;
+  }
+  .theory-factor-row > div:first-child { grid-column: 1; }
+  .theory-factor-row > div:nth-child(2),
+  .theory-factor-row > div:nth-child(3) {
+    grid-column: 1;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel { padding: 14px 16px; }
+  .chart-card { height: 200px; min-height: 160px; }
+  .metrics-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
+
+@media (max-width: 600px) {
+  .strategy-header-row { flex-direction: column; align-items: flex-start; }
+  .controls-grid { grid-template-columns: 1fr; }
+  .page-body { padding: 12px 14px; }
+  .topbar { padding: 0 12px; height: 52px; }
+  .topbar-title { font-size: 0.85rem; }
+  .nav-tabs button { padding: 10px 12px 8px; font-size: 0.8rem; }
+  .actions-row { flex-direction: column; align-items: stretch; }
+  .actions-row .primary-button,
+  .actions-row .secondary-button { justify-content: center; }
+  .chat-form { flex-direction: column; }
+  .chat-form button { width: 100%; }
+}
+
+@media (max-width: 400px) {
+  .page-body { padding: 10px 12px; }
+  .panel { padding: 12px 14px; }
+  .chart-card { height: 180px; min-height: 140px; }
 }

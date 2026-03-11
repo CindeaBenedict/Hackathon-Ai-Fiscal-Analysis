@@ -40,10 +40,6 @@ export default function SettingsPage({ authToken, apiBaseUrl }: SettingsPageProp
   }, [loadKeys]);
 
   const handleSave = async () => {
-    if (!authToken) {
-      setMessage({ type: "err", text: "You must be signed in to save API keys." });
-      return;
-    }
     setSaving(true);
     setMessage(null);
     try {
@@ -51,7 +47,7 @@ export default function SettingsPage({ authToken, apiBaseUrl }: SettingsPageProp
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         },
         body: JSON.stringify({
           anthropic: anthropicInput.trim() || undefined,
@@ -117,13 +113,10 @@ export default function SettingsPage({ authToken, apiBaseUrl }: SettingsPageProp
           type="button"
           className="primary-button"
           onClick={handleSave}
-          disabled={saving || !authToken}
+          disabled={saving}
         >
           {saving ? "Saving…" : "Save API keys"}
         </button>
-        {!authToken && (
-          <span className="muted">Sign in to save keys.</span>
-        )}
       </div>
     </section>
   );

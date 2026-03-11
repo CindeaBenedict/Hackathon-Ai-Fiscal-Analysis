@@ -11,6 +11,9 @@ export type SimulationResults = {
   profit_p50?: number;
   profit_p90?: number;
   profit_p95?: number;
+  profit_cvar95?: number;
+  profit_ci_low?: number;
+  profit_ci_high?: number;
   stockouts_average: number;
   bankruptcy_probability: number;
   bankruptcy_count: number;
@@ -30,15 +33,10 @@ export type SimChatMessage = {
 type Props = {
   results: SimulationResults;
   chatMessages: SimChatMessage[];
-  aiSummary: string | null;
-  aiProfits: number[] | null;
-  analysisMode: "monte_carlo_only" | "monte_carlo_and_ai";
   isAiLoading: boolean;
   aiModel: string;
   onSendMessage: (text: string) => void;
 };
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 const $$ = (n: number) =>
   new Intl.NumberFormat("en-US", {
@@ -49,8 +47,6 @@ const $$ = (n: number) =>
   }).format(n);
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
-
-// ── StatRow ───────────────────────────────────────────────────────────────────
 
 function StatRow({
   label,
@@ -151,8 +147,6 @@ function BankruptcyBar({ probability }: { probability: number }) {
   );
 }
 
-// ── Chat bubble ───────────────────────────────────────────────────────────────
-
 function ChatBubble({ msg }: { msg: SimChatMessage }) {
   const isUser = msg.role === "user";
   return (
@@ -200,8 +194,6 @@ function ChatBubble({ msg }: { msg: SimChatMessage }) {
   );
 }
 
-// ── Quick-reply chips ─────────────────────────────────────────────────────────
-
 const QUICK_REPLIES = [
   "Why did so many runs go bankrupt?",
   "What drives the profit variance?",
@@ -210,18 +202,7 @@ const QUICK_REPLIES = [
   "Is this strategy worth the risk?",
 ];
 
-// ── Main component ────────────────────────────────────────────────────────────
-
-export default function AnalysisDashboard({
-  results: r,
-  chatMessages,
-  aiSummary,
-  aiProfits,
-  analysisMode,
-  isAiLoading,
-  aiModel,
-  onSendMessage,
-}: Props) {
+export default function AnalysisDashboard({ results: r, chatMessages, isAiLoading, aiModel, onSendMessage }: Props) {
   const n = r.actual_simulations ?? r.profits.length;
   const bkColor =
     r.bankruptcy_probability > 0.3
@@ -233,7 +214,6 @@ export default function AnalysisDashboard({
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-scroll chat to bottom on new messages
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, isAiLoading]);
@@ -248,10 +228,8 @@ export default function AnalysisDashboard({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {/* ── Two-panel row ─────────────────────────────────────────────────── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-
-        {/* ── MATH PANEL (blue) ──────────────────────────────────────────── */}
+      <div className="dashboard-two-col">
+        {/* Math panel */}
         <section
           style={{
             background: "var(--s0)",
@@ -271,7 +249,7 @@ export default function AnalysisDashboard({
                 textTransform: "uppercase",
               }}
             >
-              📐 Math Model
+              Math Model
             </span>
             <span style={{ fontSize: "0.65rem", color: "var(--text-3)", marginLeft: "auto" }}>
               n={n.toLocaleString()}
@@ -299,6 +277,9 @@ export default function AnalysisDashboard({
           {r.profit_p05 != null && (
             <StatRow label="VaR 95% (P05)" value={$$(r.profit_p05)} sub="worst 5%" color="#ef4444" />
           )}
+          {r.profit_cvar95 != null && (
+            <StatRow label="CVaR 95%" value={$$(r.profit_cvar95)} sub="Expected Shortfall" color="#ef4444" />
+          )}
           {r.profit_p10 != null && (
             <StatRow label="P10 — bad case" value={$$(r.profit_p10)} color="#f87171" />
           )}
@@ -323,7 +304,7 @@ export default function AnalysisDashboard({
           <BankruptcyBar probability={r.bankruptcy_probability} />
         </section>
 
-        {/* ── AI CHAT PANEL (green) ──────────────────────────────────────── */}
+        {/* AI Chat panel */}
         <section
           style={{
             background: "var(--s0)",
@@ -336,7 +317,6 @@ export default function AnalysisDashboard({
             minHeight: 420,
           }}
         >
-          {/* Header */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexShrink: 0 }}>
             <span
               style={{
@@ -347,14 +327,13 @@ export default function AnalysisDashboard({
                 textTransform: "uppercase",
               }}
             >
-              🤖 AI Advisor
+              AI Advisor
             </span>
             <span style={{ fontSize: "0.65rem", color: "var(--text-3)", marginLeft: "auto" }}>
               {aiModel}
             </span>
           </div>
 
-          {/* Chat history — AI analysis appears here once as assistant message */}
           <div
             style={{
               flex: 1,
@@ -378,14 +357,10 @@ export default function AnalysisDashboard({
                 }}
               >
                 <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--text-2)" }}>
-                  {analysisMode === "monte_carlo_only"
-                    ? "Run with ‘Monte Carlo + AI’ to get AI analysis here"
-                    : "AI advisor will analyze results here"}
+                  Ask questions about these results
                 </p>
                 <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--text-3)" }}>
-                  {analysisMode === "monte_carlo_and_ai"
-                    ? "Auto-starts after simulation"
-                    : "Select ‘Monte Carlo + AI’ in controls and run again"}
+                  e.g. why did so many runs go bankrupt?
                 </p>
               </div>
             ) : (
@@ -406,9 +381,7 @@ export default function AnalysisDashboard({
                         flexShrink: 0,
                       }}
                     />
-                    <span style={{ fontSize: "0.78rem", color: "var(--text-2)" }}>
-                      Thinking…
-                    </span>
+                    <span style={{ fontSize: "0.78rem", color: "var(--text-2)" }}>Thinking…</span>
                   </div>
                 )}
                 <div ref={chatEndRef} />
@@ -416,17 +389,8 @@ export default function AnalysisDashboard({
             )}
           </div>
 
-          {/* Quick replies */}
           {chatMessages.length > 0 && !isAiLoading && (
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 5,
-                marginBottom: 8,
-                flexShrink: 0,
-              }}
-            >
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8, flexShrink: 0 }}>
               {QUICK_REPLIES.map((q) => (
                 <button
                   key={q}
@@ -442,8 +406,7 @@ export default function AnalysisDashboard({
                     transition: "background 0.15s",
                   }}
                   onMouseEnter={(e) =>
-                    ((e.target as HTMLButtonElement).style.background =
-                      "rgba(34,197,94,0.10)")
+                    ((e.target as HTMLButtonElement).style.background = "rgba(34,197,94,0.10)")
                   }
                   onMouseLeave={(e) =>
                     ((e.target as HTMLButtonElement).style.background = "transparent")
@@ -455,8 +418,7 @@ export default function AnalysisDashboard({
             </div>
           )}
 
-          {/* Input */}
-          <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <form onSubmit={handleSubmit} className="chat-form">
             <input
               ref={inputRef}
               placeholder="Ask about these results…"
@@ -472,12 +434,10 @@ export default function AnalysisDashboard({
                 outline: "none",
               }}
               onFocus={(e) =>
-                ((e.target as HTMLInputElement).style.borderColor =
-                  "rgba(34,197,94,0.5)")
+                ((e.target as HTMLInputElement).style.borderColor = "rgba(34,197,94,0.5)")
               }
               onBlur={(e) =>
-                ((e.target as HTMLInputElement).style.borderColor =
-                  "rgba(34,197,94,0.22)")
+                ((e.target as HTMLInputElement).style.borderColor = "rgba(34,197,94,0.22)")
               }
             />
             <button
@@ -503,11 +463,10 @@ export default function AnalysisDashboard({
         </section>
       </div>
 
-      {/* ── Charts (Monte Carlo = blue, AI = green when present) ───────────── */}
+      {/* Charts full width below */}
       <SimulationChart
         inventoryTraces={r.inventory_traces}
         profits={r.profits}
-        aiProfits={aiProfits}
       />
     </div>
   );

@@ -29,6 +29,8 @@ from data_ingest import (
 from models import (
     AIAdvisorRequest,
     AIAdvisorResponse,
+    AIAdvisorSummaryRequest,
+    AIAdvisorSummaryResponse,
     AIAdvisorDistributionResponse,
     AIKeysResponse,
     AIKeysUpdateRequest,
@@ -37,6 +39,8 @@ from models import (
     AuthResponse,
     AIOrderAdviceRequest,
     AIOrderAdviceResponse,
+    AIRecommendOrderForSimulationRequest,
+    AIRecommendOrderForSimulationResponse,
     AILogEntry,
     CompactSimulationResponse,
     DataChatRequest,
@@ -162,8 +166,10 @@ def update_ai_keys(
 
 
 def _config_from_request(payload: SimulationRequest) -> SimulationConfig:
+    # Zero starting cash = no inventory (cannot operate without capital)
+    initial_inv = payload.initial_inventory if (payload.initial_cash or 0) > 0 else 0.0
     return SimulationConfig(
-        initial_inventory=payload.initial_inventory,
+        initial_inventory=initial_inv,
         initial_cash=payload.initial_cash,
         baseline_demand=payload.baseline_demand,
         demand_std_dev=payload.demand_std_dev,
@@ -379,6 +385,40 @@ Return only one integer wrapped as <answer>NUMBER</answer>.
     )
 
 
+@app.post("/ai/recommend-order-for-simulation", response_model=AIRecommendOrderForSimulationResponse)
+def ai_recommend_order_for_simulation(
+    payload: AIRecommendOrderForSimulationRequest, _: str = Depends(require_auth)
+) -> AIRecommendOrderForSimulationResponse:
+    """
+    AI recommends a fixed order quantity (units per week) for the given scenario.
+    This quantity is then used in Monte Carlo, so the chosen AI model affects the math results.
+    """
+    prompt = f"""You are a supply chain planner. Given this scenario, recommend a fixed order quantity (units to order every week for the whole horizon).
+
+SCENARIO:
+- Planning horizon: {payload.weeks} weeks
+- Demand per week: normally distributed, mean {payload.baseline_demand:.0f}, std dev {payload.demand_std_dev:.0f}
+- Initial inventory: {payload.initial_inventory:.0f} units
+- Initial cash: ${payload.initial_cash:,.0f}
+- Sale price: ${payload.sale_price:.0f}/unit, order cost: ${payload.order_cost:.0f}/unit
+- Holding cost: ${payload.holding_cost:.0f}/unit/week, stockout penalty: ${payload.stockout_penalty:.0f}/unit
+- Weekly fixed cost: ${payload.weekly_fixed_cost:,.0f}, bankruptcy if cash < ${payload.bankruptcy_cash_threshold:,.0f}
+
+What fixed order quantity (one number, same every week) do you recommend? Consider balancing stockouts vs excess inventory and cash.
+Reply with only one integer. If you use tags, use <answer>NUMBER</answer>.""".strip()
+
+    raw_response, err, _ = _timed_ai_call("ai.recommend_order_for_simulation", payload.model, prompt)
+    if err:
+        raise HTTPException(status_code=503, detail=err)
+    q = extract_first_int(raw_response or "100")
+    # Clamp to sensible range for the simulation
+    q = max(20, min(300, q))
+    return AIRecommendOrderForSimulationResponse(
+        recommended_order_quantity=q,
+        model=payload.model,
+    )
+
+
 @app.post("/ai/advisor", response_model=AIAdvisorResponse)
 def ai_advisor(payload: AIAdvisorRequest, _: str = Depends(require_auth)) -> AIAdvisorResponse:
     if payload.strategy == Strategy.custom and payload.order_quantity is None:
@@ -421,6 +461,43 @@ Keep each bullet under 25 words.""".strip()
         summary=summary or "",
         compact_metrics=CompactSimulationResponse(**compact),
     )
+
+
+@app.post("/ai/advisor-summary", response_model=AIAdvisorSummaryResponse)
+def ai_advisor_summary(
+    payload: AIAdvisorSummaryRequest, _: str = Depends(require_auth)
+) -> AIAdvisorSummaryResponse:
+    """
+    Generate a short AI analysis from already-computed simulation results.
+    Used for the initial AI Advisor message without re-running Monte Carlo.
+    """
+    bk_pct = payload.bankruptcy_probability * 100
+    p10 = payload.profit_p10 if payload.profit_p10 is not None else payload.worst_profit
+    p50 = payload.profit_p50 if payload.profit_p50 is not None else payload.avg_profit
+    p90 = payload.profit_p90 if payload.profit_p90 is not None else payload.best_profit
+
+    prompt = f"""You are a supply chain risk advisor. Analyze ONLY the numbers below. Do not invent figures.
+
+SIMULATION RESULTS ({payload.simulations or "N"} runs, strategy={payload.strategy or "custom"}):
+- Average profit:     ${payload.avg_profit:,.0f}
+- P10 (bad case):     ${p10:,.0f}
+- P50 (median):       ${p50:,.0f}
+- P90 (good case):    ${p90:,.0f}
+- Worst run:          ${payload.worst_profit:,.0f}
+- Best run:           ${payload.best_profit:,.0f}
+- Bankruptcy rate:    {bk_pct:.1f}%
+- Avg weekly stockouts: {payload.stockouts_average:.2f}
+
+Write 3 short bullet points:
+• RISK: one sentence on the biggest risk shown by these numbers
+• UPSIDE: one sentence on the best-case scenario
+• ACTION: one concrete recommendation to improve the median outcome
+Keep each bullet under 25 words.""".strip()
+
+    summary, err, _ = _timed_ai_call("ai.advisor_summary", payload.model, prompt)
+    if err:
+        raise HTTPException(status_code=503, detail=err)
+    return AIAdvisorSummaryResponse(model=payload.model, summary=summary or "")
 
 
 @app.post("/ai/advisor-distribution", response_model=AIAdvisorDistributionResponse)

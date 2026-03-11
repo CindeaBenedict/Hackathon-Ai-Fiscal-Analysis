@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 
-export type Strategy = "conservative" | "balanced" | "aggressive" | "custom";
-
-export type AnalysisMode = "monte_carlo_only" | "monte_carlo_and_ai";
+export type Strategy = "conservative" | "balanced" | "aggressive" | "custom" | "ai_recommended";
 
 // ── Model presets ─────────────────────────────────────────────────────────────
 
@@ -44,7 +42,6 @@ type ProviderStatus = {
 
 type StrategySelectorProps = {
   strategy: Strategy;
-  analysisMode: AnalysisMode;
   customOrderQuantity: number;
   simulations: number;
   initialCash: number;
@@ -54,7 +51,6 @@ type StrategySelectorProps = {
   salePrice: number;
   aiModel: string;
   onStrategyChange: (value: Strategy) => void;
-  onAnalysisModeChange: (value: AnalysisMode) => void;
   onCustomOrderQuantityChange: (value: number) => void;
   onSimulationsChange: (value: number) => void;
   onInitialCashChange: (value: number) => void;
@@ -64,6 +60,7 @@ type StrategySelectorProps = {
   onSalePriceChange: (value: number) => void;
   onAiModelChange: (value: string) => void;
   onSimulate: () => void;
+  onStop: () => void;
   isLoading: boolean;
 };
 
@@ -71,7 +68,6 @@ type StrategySelectorProps = {
 
 function StrategySelector({
   strategy,
-  analysisMode,
   customOrderQuantity,
   simulations,
   initialCash,
@@ -81,7 +77,6 @@ function StrategySelector({
   salePrice,
   aiModel,
   onStrategyChange,
-  onAnalysisModeChange,
   onCustomOrderQuantityChange,
   onSimulationsChange,
   onInitialCashChange,
@@ -91,14 +86,16 @@ function StrategySelector({
   onSalePriceChange,
   onAiModelChange,
   onSimulate,
+  onStop,
   isLoading,
 }: StrategySelectorProps) {
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
   const [customModel, setCustomModel] = useState("");
 
-  const orderQty = strategy === "conservative" ? 150
-    : strategy === "balanced" ? 120
-    : strategy === "aggressive" ? 100
+  const orderQty = strategy === "conservative" ? 120
+    : strategy === "balanced" ? 100
+    : strategy === "aggressive" ? 80
+    : strategy === "ai_recommended" ? (customOrderQuantity > 0 ? customOrderQuantity : "—")
     : customOrderQuantity;
   const grossMargin = salePrice - 10;
   const weeklyNet = 100 * grossMargin - weeklyFixedCost;
@@ -123,7 +120,7 @@ function StrategySelector({
   return (
     <section className="panel">
       {/* ── Header with margin indicator ─────────────────────────────── */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div className="strategy-header-row">
         <h2 style={{ margin: 0 }}>Simulation Controls</h2>
         <span style={{
           fontSize: "0.73rem", fontWeight: 600, padding: "4px 10px",
@@ -139,22 +136,15 @@ function StrategySelector({
       {/* ── Simulation parameters ─────────────────────────────────────── */}
       <div className="controls-grid">
         <label>
-          Analysis
-          <select
-            value={analysisMode}
-            onChange={(e) => onAnalysisModeChange(e.target.value as AnalysisMode)}
-            title={analysisMode === "monte_carlo_and_ai" ? "Runs Monte Carlo + AI advisor" : "Runs Monte Carlo only"}
-          >
-            <option value="monte_carlo_and_ai">Monte Carlo + AI (both, color-coded)</option>
-            <option value="monte_carlo_only">Monte Carlo only (math)</option>
-          </select>
-        </label>
-        <label>
           Strategy
-          <select value={strategy} onChange={(e) => onStrategyChange(e.target.value as Strategy)}>
-            <option value="conservative">Conservative (150 units)</option>
-            <option value="balanced">Balanced (120 units)</option>
-            <option value="aggressive">Aggressive (100 units)</option>
+          <select
+            value={strategy}
+            onChange={(e) => onStrategyChange(e.target.value as Strategy)}
+          >
+            <option value="conservative">Conservative (120 units)</option>
+            <option value="balanced">Balanced (100 units)</option>
+            <option value="aggressive">Aggressive (80 units)</option>
+            <option value="ai_recommended">AI-recommended (model picks Q)</option>
             <option value="custom">Custom</option>
           </select>
         </label>
@@ -162,7 +152,10 @@ function StrategySelector({
           Custom Order Qty
           <input type="number" min={0} value={customOrderQuantity}
             onChange={(e) => onCustomOrderQuantityChange(Number(e.target.value))}
-            disabled={strategy !== "custom"} />
+            disabled={strategy !== "custom"}
+            placeholder={strategy === "ai_recommended" ? "Set by AI when you Run" : undefined}
+            title={strategy === "ai_recommended" ? "Set by AI when you run the simulation" : undefined}
+          />
         </label>
         <label>
           Simulations
@@ -197,7 +190,7 @@ function StrategySelector({
       </div>
 
       <p style={{ fontSize: "0.73rem", color: "var(--text-2)", marginBottom: 16 }}>
-        Order cost: $10/unit · Gross margin: ${grossMargin}/unit · {orderQty} units ordered/week
+        Order cost: $10/unit · Gross margin: ${grossMargin}/unit · {strategy === "ai_recommended" ? "Q from AI" : `${orderQty} units`} ordered/week
       </p>
 
       {/* ── AI Model picker ───────────────────────────────────────────── */}
@@ -330,11 +323,19 @@ function StrategySelector({
         <button className="primary-button" onClick={onSimulate} disabled={isLoading}>
           {isLoading ? "Running…" : "Run Simulation"}
         </button>
-        <span style={{ fontSize: "0.73rem", color: "var(--text-2)" }}>
-          {analysisMode === "monte_carlo_and_ai"
-            ? "Monte Carlo + AI — both shown and color-coded below"
-            : "Math only — no AI analysis"}
-        </span>
+        {isLoading && (
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onStop}
+            style={{
+              borderColor: "rgba(239,68,68,0.5)",
+              color: "#f87171",
+            }}
+          >
+            Stop
+          </button>
+        )}
       </div>
     </section>
   );

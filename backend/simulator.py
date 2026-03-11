@@ -1,3 +1,18 @@
+"""
+Monte Carlo supply chain simulation — mathematical model.
+
+1. Weekly demand: D_t ~ max(0, N(μ, σ²))
+2. Inventory: I_t_raw = I_{t-1} + A_t - D_t,  I_t = max(0, I_t_raw)
+3. Stockout: Stockout_t = max(0, D_t - (I_{t-1} + A_t))
+4. Sold: S_t = min(D_t, I_{t-1} + A_t)
+5. Weekly profit: Π_t = p·S_t - c_o·Q_t - c_h·I_t - c_s·Stockout_t - c_f
+6. Total profit: Π = sum_{t=1..T} Π_t
+7. Monte Carlo: μ̂_Π = (1/N) Σ Π^(i),  σ̂ = sqrt(Σ(Π^(i)-μ̂)²/(N-1))
+8. CI 95%: μ̂_Π ± 1.96·σ̂/√N
+9. VaR 95%: 5th percentile of Π
+10. CVaR 95%: mean of worst 5% of outcomes
+11. Bankruptcy: P(bankrupt) = (1/N) Σ 1(Π^(i) < B)
+"""
 import hashlib
 import random
 from dataclasses import dataclass, field
@@ -52,13 +67,15 @@ class SimulationConfig:
 
 
 def _strategy_quantity(strategy: Strategy, custom_quantity: int | None) -> int:
+    # Conservative = safety buffer above demand → fewer stockouts, more stable.
+    # Aggressive = lean (below demand) → more stockouts, riskier.
     if strategy == Strategy.conservative:
-        return 150
-    if strategy == Strategy.balanced:
         return 120
-    if strategy == Strategy.aggressive:
+    if strategy == Strategy.balanced:
         return 100
-    return custom_quantity if custom_quantity is not None else 120
+    if strategy == Strategy.aggressive:
+        return 80
+    return custom_quantity if custom_quantity is not None else 100
 
 
 def _apply_disruption_events(
@@ -141,10 +158,13 @@ def simulate_single_run(
         # Operational fixed cost (staff, utilities, overhead)
         state.cash -= config.weekly_fixed_cost
 
-        # 6) Place new order based on strategy
-        state.cash -= order_quantity * config.order_cost
-        arrival_week = week + config.lead_time_weeks + lead_time_extra
-        state.orders_in_transit.append((arrival_week, order_quantity))
+        # 6) Place new order based on strategy — only if we can afford it
+        max_affordable = max(0, int(state.cash / config.order_cost))
+        order_actual = min(order_quantity, max_affordable)
+        state.cash -= order_actual * config.order_cost
+        if order_actual > 0:
+            arrival_week = week + config.lead_time_weeks + lead_time_extra
+            state.orders_in_transit.append((arrival_week, float(order_actual)))
 
         if state.cash < config.bankruptcy_cash_threshold:
             bankrupt = True
@@ -245,12 +265,13 @@ def run_monte_carlo_stable(
 
         profits = [r["profit"] for r in run_results]
         mean_profit = sum(profits) / len(profits)
-        if len(profits) > 1:
-            variance = sum((p - mean_profit) ** 2 for p in profits) / len(profits)
+        n_run = len(profits)
+        if n_run >= 2:
+            variance = sum((p - mean_profit) ** 2 for p in profits) / (n_run - 1)
             std_profit = math.sqrt(max(variance, 0.0))
         else:
             std_profit = 0.0
-        profit_ci_half_width = 1.96 * std_profit / math.sqrt(len(profits))
+        profit_ci_half_width = 1.96 * std_profit / math.sqrt(n_run) if n_run > 0 else float("inf")
 
         bankruptcies = sum(1 for r in run_results if r["bankrupt"])
         p_hat = bankruptcies / len(run_results)
@@ -271,9 +292,17 @@ def run_monte_carlo_stable(
 
     n = len(profits)
     mean_p = sum(profits) / n
-    variance = sum((p - mean_p) ** 2 for p in profits) / n
-    std_p = math.sqrt(max(variance, 0.0))
+    # Sample standard deviation (N-1) for unbiased estimator
+    if n >= 2:
+        variance = sum((p - mean_p) ** 2 for p in profits) / (n - 1)
+        std_p = math.sqrt(max(variance, 0.0))
+    else:
+        std_p = 0.0
     p_hat = bankruptcies / n
+
+    # CI 95%: mean ± 1.96 * σ̂ / √N
+    se = std_p / math.sqrt(n) if n > 0 else 0.0
+    profit_ci_half_width = 1.96 * se
 
     # Sample a capped number of traces to keep response size manageable
     trace_sample = inventory_traces[:20] if len(inventory_traces) > 20 else inventory_traces
@@ -288,24 +317,45 @@ def run_monte_carlo_stable(
         "profit_p50": _percentile(profits, 0.50),
         "profit_p90": _percentile(profits, 0.90),
         "profit_p95": _percentile(profits, 0.95),
+        "profit_cvar95": _cvar95(profits),          # Expected Shortfall
         "stockouts_average": sum(stockout_counts) / n,
         "bankruptcy_probability": p_hat,
         "bankruptcy_count": bankruptcies,
         "actual_simulations": n,
-        "profit_ci_half_width": 1.96 * std_p / math.sqrt(n),
+        "profit_ci_half_width": profit_ci_half_width,
+        "profit_ci_low": mean_p - profit_ci_half_width,
+        "profit_ci_high": mean_p + profit_ci_half_width,
         "bankruptcy_ci_half_width": 1.96 * math.sqrt(max(p_hat * (1 - p_hat) / n, 0.0)),
         "inventory_traces": trace_sample,
         "profits": profits,
     }
 
 
-def _percentile(values: List[float], percentile: float) -> float:
+def _percentile(values: List[float], q: float) -> float:
+    """Quantile q in [0,1] with linear interpolation."""
     if not values:
         return 0.0
     ordered = sorted(values)
-    idx = int(round((len(ordered) - 1) * percentile))
-    idx = max(0, min(idx, len(ordered) - 1))
-    return ordered[idx]
+    if q <= 0:
+        return ordered[0]
+    if q >= 1:
+        return ordered[-1]
+    pos = (len(ordered) - 1) * q
+    lower = int(math.floor(pos))
+    upper = int(math.ceil(pos))
+    if lower == upper:
+        return ordered[lower]
+    weight = pos - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+
+def _cvar95(profits: List[float]) -> float:
+    """CVaR 95%: mean of the worst 5% of profit outcomes (Expected Shortfall)."""
+    if not profits:
+        return 0.0
+    ordered = sorted(profits)
+    k = max(1, math.ceil(0.05 * len(ordered)))
+    return sum(ordered[:k]) / k
 
 
 def _mean_trace(traces: List[List[float]]) -> List[float]:

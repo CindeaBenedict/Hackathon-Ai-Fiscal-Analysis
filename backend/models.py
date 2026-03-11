@@ -49,11 +49,14 @@ class SimulationResponse(BaseModel):
     profit_p50: Optional[float] = None
     profit_p90: Optional[float] = None
     profit_p95: Optional[float] = None
+    profit_cvar95: Optional[float] = None   # CVaR 95% (Expected Shortfall)
     stockouts_average: float
     bankruptcy_probability: float
     bankruptcy_count: int
     actual_simulations: Optional[int] = None
     profit_ci_half_width: Optional[float] = None
+    profit_ci_low: Optional[float] = None
+    profit_ci_high: Optional[float] = None
     bankruptcy_ci_half_width: Optional[float] = None
     inventory_traces: List[List[float]]
     profits: List[float]
@@ -87,6 +90,27 @@ class AIOrderAdviceResponse(BaseModel):
     raw_response: str
 
 
+class AIRecommendOrderForSimulationRequest(BaseModel):
+    """Scenario params for AI to recommend a single order quantity (used to drive Monte Carlo)."""
+    model: str = Field(default="llama3.2:1b")
+    baseline_demand: float = Field(default=100, ge=0)
+    demand_std_dev: float = Field(default=25, ge=0)
+    initial_cash: float = Field(default=5000, ge=0)
+    initial_inventory: float = Field(default=150, ge=0)
+    sale_price: float = Field(default=50, ge=0)
+    order_cost: float = Field(default=10, ge=0)
+    holding_cost: float = Field(default=2, ge=0)
+    stockout_penalty: float = Field(default=25, ge=0)
+    weekly_fixed_cost: float = Field(default=3200, ge=0)
+    bankruptcy_cash_threshold: float = Field(default=500)
+    weeks: int = Field(default=12, ge=1, le=52)
+
+
+class AIRecommendOrderForSimulationResponse(BaseModel):
+    recommended_order_quantity: int
+    model: str
+
+
 class AIAdvisorRequest(SimulationRequest):
     model: str = Field(default="llama3")
 
@@ -95,6 +119,27 @@ class AIAdvisorResponse(BaseModel):
     model: str
     summary: str
     compact_metrics: CompactSimulationResponse
+
+
+class AIAdvisorSummaryRequest(BaseModel):
+    """Request initial AI analysis from already-computed simulation results (no re-run)."""
+    model: str = Field(default="llama3.2:1b")
+    strategy: Optional[str] = None
+    simulations: Optional[int] = None
+    avg_profit: float = Field(..., description="Average profit from Monte Carlo")
+    profit_p10: Optional[float] = None
+    profit_p50: Optional[float] = None
+    profit_p90: Optional[float] = None
+    worst_profit: float = Field(..., description="Worst run profit")
+    best_profit: float = Field(..., description="Best run profit")
+    bankruptcy_probability: float = Field(..., ge=0, le=1)
+    bankruptcy_count: Optional[int] = None
+    stockouts_average: float = Field(default=0)
+
+
+class AIAdvisorSummaryResponse(BaseModel):
+    model: str
+    summary: str
 
 
 class AIAdvisorDistributionResponse(BaseModel):

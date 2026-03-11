@@ -1,3 +1,4 @@
+import React, { useState } from "react";
 import {
   BarElement,
   CategoryScale,
@@ -104,8 +105,79 @@ function MCard({ label, value, color }: { label: string; value: string; color?: 
 
 // ── Main component ────────────────────────────────────────────────────────────
 function TheoryPage({ report, onGenerate, isLoading }: TheoryPageProps) {
+  const [showFormulas, setShowFormulas] = useState(true);
+
   return (
     <section className="panel">
+      {/* ── Mathematical model (academic reference) ───────────────────────────── */}
+      <div style={{
+        background: "var(--s0)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-md)",
+        padding: "16px 18px",
+        marginBottom: 20,
+      }}>
+        <button
+          type="button"
+          onClick={() => setShowFormulas((v) => !v)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+            border: "none",
+            background: "none",
+            color: "var(--text)",
+            cursor: "pointer",
+            fontSize: "0.85rem",
+            fontWeight: 700,
+            textAlign: "left",
+          }}
+        >
+          {showFormulas ? "▼" : "▶"} Mathematical model — Monte Carlo supply chain
+        </button>
+        {showFormulas && (
+          <div style={{ marginTop: 14, fontSize: "0.80rem", lineHeight: 1.85, color: "var(--text-2)" }}>
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>1. Weekly demand</p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>D<sub>t</sub> ∼ max(0, N(μ, σ²))</p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>2. Inventory</p>
+            <p style={{ margin: "0 0 4px", fontFamily: "monospace" }}>I<sub>t</sub><sup>raw</sup> = I<sub>t−1</sub> + A<sub>t</sub> − D<sub>t</sub></p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>I<sub>t</sub> = max(0, I<sub>t</sub><sup>raw</sup>)</p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>3. Stockout</p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>Stockout<sub>t</sub> = max(0, D<sub>t</sub> − (I<sub>t−1</sub> + A<sub>t</sub>))</p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>4. Units sold</p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>S<sub>t</sub> = min(D<sub>t</sub>, I<sub>t−1</sub> + A<sub>t</sub>)</p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>5. Weekly profit</p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>Π<sub>t</sub> = p·S<sub>t</sub> − c<sub>o</sub>·Q<sub>t</sub> − c<sub>h</sub>·I<sub>t</sub> − c<sub>s</sub>·Stockout<sub>t</sub> − c<sub>f</sub></p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>6. Total profit (T = 12 weeks)</p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>Π = Σ<sub>t=1..T</sub> Π<sub>t</sub></p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>7. Monte Carlo mean</p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>μ̂<sub>Π</sub> = (1/N) Σ<sub>i</sub> Π<sup>(i)</sup></p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>8. Sample standard deviation</p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>σ̂ = √( Σ(Π<sup>(i)</sup> − μ̂<sub>Π</sub>)² / (N−1) )</p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>9. 95% confidence interval (CLT)</p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>CI = μ̂<sub>Π</sub> ± 1.96 · σ̂/√N</p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>10. VaR 95%</p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>VaR<sub>95</sub> = Q<sub>0.05</sub>(Π) — 5th percentile</p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>11. CVaR 95% (Expected Shortfall)</p>
+            <p style={{ margin: "0 0 12px", fontFamily: "monospace" }}>CVaR<sub>95</sub> = E[Π | Π ≤ VaR<sub>95</sub>] — mean of worst 5%</p>
+
+            <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--text)" }}>12. Bankruptcy probability</p>
+            <p style={{ margin: "0 0 0", fontFamily: "monospace" }}>P(bankrupt) = (1/N) Σ<sub>i</sub> 1(Π<sup>(i)</sup> &lt; B)</p>
+          </div>
+        )}
+      </div>
+
       <div className="panel-header">
         <div>
           <h2>Theory + Real-World Factors</h2>
@@ -164,7 +236,7 @@ function TheoryPage({ report, onGenerate, isLoading }: TheoryPageProps) {
           {/* ── Factor Impact charts ────────────────────────────────────── */}
           {report.factor_impacts.length > 0 && (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div className="theory-charts-row">
                 {/* Profit impact per factor */}
                 <div style={{
                   background: "var(--s1)", border: "1px solid var(--border)",
@@ -501,11 +573,9 @@ function FactorRow({ factor: f }: { factor: FactorImpact }) {
   const bkColor = bkDelta <= 0 ? "#22c55e" : "#ef4444";
 
   return (
-    <div style={{
+    <div className="theory-factor-row" style={{
       background: "var(--s0)", border: "1px solid var(--border)",
       borderRadius: "var(--r-sm)", padding: "10px 14px",
-      display: "grid", gridTemplateColumns: "1fr auto auto", gap: "0 16px",
-      alignItems: "start",
     }}>
       <div>
         <strong style={{ fontSize: "0.84rem", display: "block", marginBottom: 3 }}>{f.factor}</strong>
