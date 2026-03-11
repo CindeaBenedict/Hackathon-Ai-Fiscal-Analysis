@@ -1374,6 +1374,10 @@ function App() {
             </div>
           </div>
           <div className="topbar-right">
+            <div className="powered-by-badge" title="Powered by OMP">
+              <span>Powered by</span>
+              <img src="/omp-logo.png" alt="OMP" />
+            </div>
             {matrixHint ? (
               <span className="muted" style={{ fontSize: "0.75rem" }}>
                 {matrixHint}

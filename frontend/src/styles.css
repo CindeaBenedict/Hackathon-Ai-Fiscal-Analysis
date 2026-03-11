@@ -157,6 +157,25 @@ body {
   align-items: center;
   gap: 10px;
 }
+.powered-by-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--s1);
+  color: var(--text-2);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.powered-by-badge img {
+  height: 16px;
+  width: auto;
+  display: block;
+  object-fit: contain;
+}
 
 .status-pill {
   display: inline-flex;
@@ -736,6 +755,7 @@ select option { background: var(--s1); }
   .topbar-right { gap: 6px; }
   .topbar-right .secondary-button { padding: 6px 10px; font-size: 0.78rem; min-height: 36px; }
   .user-chip { display: none; }
+  .powered-by-badge { display: none; }
   .topbar-logo { width: 156px; height: 38px; }
   .topbar-title { font-size: 0.85rem; }
   .nav-tabs button { padding: 10px 12px 8px; font-size: 0.8rem; }
