@@ -9,6 +9,7 @@ import uuid
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from ai_agent import (
     OllamaUnavailableError,
@@ -110,6 +111,39 @@ def startup_event() -> None:
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
         raise RuntimeError(f"Startup failed: {e}") from e
+
+
+def _root_html() -> str:
+    frontend_url = os.getenv("FRONTEND_URL", "").strip()
+    link = frontend_url if frontend_url else "https://your-app.vercel.app"
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Supply Chain API</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; max-width: 42rem; margin: 4rem auto; padding: 0 1rem; color: #1e293b; }}
+  h1 {{ font-size: 1.25rem; color: #0f172a; }}
+  p {{ line-height: 1.6; color: #475569; }}
+  a {{ color: #2563eb; }}
+  .box {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1.25rem; margin-top: 1.5rem; }}
+</style>
+</head>
+<body>
+  <h1>Supply Chain Command Center — API</h1>
+  <p>This is the <strong>backend API</strong>. The app (dashboard, simulation, AI) runs in the frontend.</p>
+  <div class="box">
+    <p><strong>Open the app:</strong><br><a href="{link}" target="_blank" rel="noopener">{link}</a></p>
+    <p style="margin-top: 0.75rem; font-size: 0.875rem;">If you see this on Heroku, set <code>FRONTEND_URL</code> in Config Vars to your Vercel URL, then redeploy.</p>
+  </div>
+  <p style="margin-top: 1.5rem;"><a href="/docs">API docs (Swagger)</a> · <a href="/health">Health</a></p>
+</body>
+</html>"""
+
+
+@app.get("/", response_class=HTMLResponse)
+def root() -> str:
+    """Show a short message and link to the frontend so users don't think the API is the app."""
+    return _root_html()
 
 
 @app.get("/health")
