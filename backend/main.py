@@ -2,6 +2,7 @@ from datetime import datetime
 from dataclasses import replace
 import math
 import os
+import sys
 import threading
 import time
 from statistics import NormalDist, pstdev
@@ -941,10 +942,31 @@ Return 3 concise bullet points.
 
 
 # ── Serve frontend when built (e.g. full app on Heroku) ─────────────────────
-_frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
-if os.path.isdir(_frontend_dist):
+def _find_frontend_dist() -> str | None:
+    """Try several possible locations for the built frontend (frontend/dist)."""
+    base = os.path.dirname(os.path.abspath(__file__))  # backend/
+    candidates = [
+        os.path.join(base, "..", "frontend", "dist"),
+        os.path.join(os.getcwd(), "..", "frontend", "dist"),
+        os.path.join(os.getcwd(), "frontend", "dist"),
+    ]
+    for path in candidates:
+        resolved = os.path.abspath(path)
+        if os.path.isdir(resolved) and os.path.isfile(os.path.join(resolved, "index.html")):
+            return resolved
+    return None
+
+
+_frontend_dist = _find_frontend_dist()
+if _frontend_dist:
     app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")
+    print(f"Frontend mounted from {_frontend_dist}", file=sys.stderr, flush=True)
 else:
+    print(
+        "Frontend dist not found. On Heroku: add buildpack heroku/nodejs FIRST, then heroku/python, then redeploy.",
+        file=sys.stderr,
+        flush=True,
+    )
 
     def _root_html() -> str:
         frontend_url = os.getenv("FRONTEND_URL", "").strip()
