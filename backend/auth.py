@@ -198,10 +198,18 @@ def register_user(username: str, password: str, email: str | None = None) -> Non
 
 
 def login_user(username: str, password: str) -> str | None:
+    identifier = (username or "").strip()
+    identifier_email = identifier.lower()
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT id, password_hash, salt FROM users WHERE username = ?",
-            (username,),
+            """
+            SELECT id, password_hash, salt
+            FROM users
+            WHERE username = ?
+               OR (email IS NOT NULL AND lower(email) = ?)
+            LIMIT 1
+            """,
+            (identifier, identifier_email),
         ).fetchone()
         if row is None:
             return None

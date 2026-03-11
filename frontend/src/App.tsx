@@ -1211,7 +1211,7 @@ function App() {
               <div style={{ display: "grid", gap: 8, width: "100%" }}>
                 <input
                   type="text"
-                  placeholder="Username"
+                  placeholder={authMode === "login" ? "Username or email" : "Username"}
                   value={authUsernameInput}
                   onChange={(e) => setAuthUsernameInput(e.target.value)}
                 />
