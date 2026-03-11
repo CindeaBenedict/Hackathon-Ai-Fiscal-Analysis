@@ -651,6 +651,9 @@ select option { background: var(--s1); }
   .controls-grid { grid-template-columns: 1fr; }
   .page-body { padding: 12px 14px; }
   .topbar { padding: 0 12px; height: 52px; }
+  .topbar-right { gap: 6px; }
+  .topbar-right .secondary-button { padding: 6px 10px; font-size: 0.78rem; min-height: 36px; }
+  .user-chip { display: none; }
   .topbar-logo { width: 110px; height: 28px; }
   .topbar-title { font-size: 0.85rem; }
   .nav-tabs button { padding: 10px 12px 8px; font-size: 0.8rem; }
@@ -783,6 +786,7 @@ select option { background: var(--s1); }
   .panel { padding: 12px 12px; }
   .chart-card { height: 180px; min-height: 140px; }
   .topbar { height: 48px; padding: 0 10px; }
+  .topbar-logo { width: 96px; height: 24px; }
   .topbar-title { font-size: 0.8rem; }
   .status-pill { font-size: 0.6rem; padding: 2px 8px; }
   .splash-card { padding: 28px 18px; }

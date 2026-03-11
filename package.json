@@ -2,7 +2,10 @@
   "name": "supply-chain-command-center",
   "private": true,
   "scripts": {
-    "build": "cd frontend && npm install --include=dev && npm run build"
+    "build": "cd frontend && npm install --include=dev && npm run build",
+    "package:local:all": "bash ./scripts/package_all_local_apps.sh all",
+    "package:local:desktop": "bash ./scripts/package_all_local_apps.sh windows macos linux",
+    "package:local:mobile": "bash ./scripts/package_all_local_apps.sh android ios"
   },
   "engines": {
     "node": "20.x"

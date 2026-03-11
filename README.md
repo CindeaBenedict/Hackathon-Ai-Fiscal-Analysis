@@ -7,6 +7,7 @@ A **Monte Carlo supply chain simulator** with an **AI advisor**: run hundreds of
 ## Table of contents
 
 - [What the app does](#what-the-app-does)
+- [Installer downloads (no backend access)](#installer-downloads-no-backend-access)
 - [Prerequisites](#prerequisites)
 - [Quick start (Docker)](#quick-start-docker)
 - [Detailed setup](#detailed-setup)
@@ -39,6 +40,75 @@ A **Monte Carlo supply chain simulator** with an **AI advisor**: run hundreds of
 | **Settings** | Store Claude/OpenAI API keys in the app; choose default AI model. |
 
 The app is **responsive**: it works on smaller screens (tablets, phones) with a single-column layout and stacked controls.
+
+---
+
+## Installer downloads (no backend access)
+
+Use these packaged apps when users cannot run or access the backend setup directly.  
+Recommended distribution target: **GitHub Releases** for this repo.
+
+> Replace `<org>` and `<repo>` with your real repository path (or update links to your release CDN).
+
+### Desktop installers
+
+- **Windows (.exe):** [Download](https://github.com/<org>/<repo>/releases/latest/download/SupplyChainCommand-Setup.exe)
+- **Windows (.msi):** [Download](https://github.com/<org>/<repo>/releases/latest/download/SupplyChainCommand-Installer.msi)
+- **macOS (.dmg, unsigned local app):** [Download](https://github.com/<org>/<repo>/releases/latest/download/SupplyChainCommand.dmg)
+- **Linux AppImage:** [Download](https://github.com/<org>/<repo>/releases/latest/download/SupplyChainCommand.AppImage)
+- **Linux .deb:** [Download](https://github.com/<org>/<repo>/releases/latest/download/supply-chain-command-amd64.deb)
+- **Linux .rpm:** [Download](https://github.com/<org>/<repo>/releases/latest/download/supply-chain-command-x86_64.rpm)
+
+### Mobile packages
+
+- **Android (.apk):** [Download](https://github.com/<org>/<repo>/releases/latest/download/supply-chain-command.apk)
+- **iOS local build guide (Xcode, signing required):** [Instructions](https://github.com/<org>/<repo>#option-c-local-development-no-docker)
+
+### Notes for users
+
+- These app packages are intended for local use where full backend deployment is not available.
+- Some features that require live server APIs may be limited depending on package mode.
+- On macOS without notarization, first launch may require **right-click -> Open**.
+
+### Build installers locally (all OS targets)
+
+This repo includes build scripts for local app packages in `scripts/`:
+
+- macOS/Linux shell script: `scripts/package_all_local_apps.sh`
+- Windows PowerShell script: `scripts/package_all_local_apps.ps1`
+
+From project root:
+
+```bash
+# Build all desktop + mobile targets (requires Flutter SDK + platform toolchains)
+npm run package:local:all
+
+# Desktop only
+npm run package:local:desktop
+
+# Mobile only
+npm run package:local:mobile
+```
+
+Or run specific targets:
+
+```bash
+bash ./scripts/package_all_local_apps.sh windows linux android
+```
+
+On Windows (PowerShell):
+
+```powershell
+.\scripts\package_all_local_apps.ps1 windows android
+```
+
+#### Platform requirements
+
+- **Windows packaging**: run on Windows with Visual Studio build tools.
+- **macOS packaging**: run on macOS with Xcode.
+- **Linux packaging**: run on Linux (Ubuntu recommended) with required build deps.
+- **Android APK**: Android SDK + Java toolchain.
+- **iOS build**: macOS + Xcode; signing is still required to install on devices.
 
 ---
 
