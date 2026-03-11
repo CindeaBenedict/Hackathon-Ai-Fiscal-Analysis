@@ -45,24 +45,21 @@ The app is **responsive**: it works on smaller screens (tablets, phones) with a 
 
 ## Installer downloads (no backend access)
 
-Use these packaged apps when users cannot run or access the backend setup directly.  
-Recommended distribution target: **GitHub Releases** for this repo.
-
-> Replace `<org>` and `<repo>` with your real repository path (or update links to your release CDN).
+Use these packaged apps when users cannot run or access the backend setup directly.
+Release page: [GitLab Releases](https://gitlab.com/next-level-challenge/team-28/-/releases)
 
 ### Desktop installers
 
-- **Windows (.exe):** [Download](https://github.com/<org>/<repo>/releases/latest/download/SupplyChainCommand-Setup.exe)
-- **Windows (.msi):** [Download](https://github.com/<org>/<repo>/releases/latest/download/SupplyChainCommand-Installer.msi)
-- **macOS (.dmg, unsigned local app):** [Download](https://github.com/<org>/<repo>/releases/latest/download/SupplyChainCommand.dmg)
-- **Linux AppImage:** [Download](https://github.com/<org>/<repo>/releases/latest/download/SupplyChainCommand.AppImage)
-- **Linux .deb:** [Download](https://github.com/<org>/<repo>/releases/latest/download/supply-chain-command-amd64.deb)
-- **Linux .rpm:** [Download](https://github.com/<org>/<repo>/releases/latest/download/supply-chain-command-x86_64.rpm)
+- **Windows Setup (.exe):** [Download](https://gitlab.com/next-level-challenge/team-28/-/releases/permalink/latest/downloads/SupplyChainCommand-Setup.exe)
+- **macOS (.dmg, unsigned local app):** [Download](https://gitlab.com/next-level-challenge/team-28/-/releases/permalink/latest/downloads/SupplyChainCommand.dmg)
+- **Linux AppImage:** [Download](https://gitlab.com/next-level-challenge/team-28/-/releases/permalink/latest/downloads/SupplyChainCommand.AppImage)
+- **Linux .deb (Ubuntu):** [Download](https://gitlab.com/next-level-challenge/team-28/-/releases/permalink/latest/downloads/supply-chain-command-amd64.deb)
+- **Linux .rpm:** [Download](https://gitlab.com/next-level-challenge/team-28/-/releases/permalink/latest/downloads/supply-chain-command-x86_64.rpm)
 
 ### Mobile packages
 
-- **Android (.apk):** [Download](https://github.com/<org>/<repo>/releases/latest/download/supply-chain-command.apk)
-- **iOS local build guide (Xcode, signing required):** [Instructions](https://github.com/<org>/<repo>#option-c-local-development-no-docker)
+- **Android (.apk):** [Download](https://gitlab.com/next-level-challenge/team-28/-/releases/permalink/latest/downloads/supply-chain-command.apk)
+- **iOS local build guide (Xcode, signing required):** [Instructions](#option-c-local-development-no-docker)
 
 ### Notes for users
 

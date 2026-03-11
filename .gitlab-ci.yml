@@ -1,0 +1,43 @@
+stages:
+  - package
+
+variables:
+  FLUTTER_DIR: "flutter_app"
+
+package_macos_dmg:
+  stage: package
+  tags:
+    - macos
+  script:
+    - cd "$FLUTTER_DIR"
+    - flutter pub get
+    - flutter build macos --release
+    - cd ..
+    - APP_DIR=$(ls -d "$FLUTTER_DIR"/build/macos/Build/Products/Release/*.app | head -n 1)
+    - mkdir -p "$FLUTTER_DIR/build/macos/dmg"
+    - hdiutil create -volname "SupplyChainCommand" -srcfolder "$APP_DIR" -ov -format UDZO "$FLUTTER_DIR/build/macos/dmg/SupplyChainCommand.dmg"
+  artifacts:
+    name: "macos-dmg-$CI_COMMIT_SHORT_SHA"
+    expire_in: 7 days
+    paths:
+      - flutter_app/build/macos/dmg/SupplyChainCommand.dmg
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+package_windows_setup:
+  stage: package
+  tags:
+    - windows
+  script:
+    - powershell -Command "cd $env:FLUTTER_DIR; flutter pub get; flutter build windows --release"
+    - powershell -Command "if (-not (Test-Path \"$env:ProgramFiles(x86)\\Inno Setup 6\\ISCC.exe\")) { choco install innosetup -y --no-progress }"
+    - powershell -Command "& \"$env:ProgramFiles(x86)\\Inno Setup 6\\ISCC.exe\" scripts\\windows-installer.iss"
+  artifacts:
+    name: "windows-setup-$CI_COMMIT_SHORT_SHA"
+    expire_in: 7 days
+    paths:
+      - flutter_app/build/windows/installer/SupplyChainCommand-Setup.exe
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "web"
