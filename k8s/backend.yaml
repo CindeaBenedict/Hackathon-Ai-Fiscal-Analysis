@@ -14,18 +14,43 @@ spec:
       labels:
         app: backend
     spec:
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: backend
           image: supplychain-backend:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
+          env:
+            - name: AUTH_DB_PATH
+              value: /app/data/auth.db
+            - name: ALLOW_EPHEMERAL_DB_FALLBACK
+              value: "0"
+          volumeMounts:
+            - name: backend-data
+              mountPath: /app/data
           readinessProbe:
             httpGet:
               path: /health
               port: 8000
             initialDelaySeconds: 2
             periodSeconds: 5
+      volumes:
+        - name: backend-data
+          persistentVolumeClaim:
+            claimName: backend-data-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backend-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
