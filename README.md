@@ -317,7 +317,7 @@ These are used by **Docker Compose** (backend service) when you run `./start.sh`
 | `ANTHROPIC_API_KEY` | No | — | Claude API key. Can also be set in the app Settings (stored server-side). |
 | `OPENAI_API_KEY` | No | — | OpenAI API key. Can also be set in the app Settings. |
 | `DEFAULT_MODEL` | No | `llama3.2:1b` | Model pulled by Ollama on first backend startup and used as default in the UI. |
-| `AUTH_DB_PATH` | No | `/app/data/auth.db` | Path to SQLite DB for auth and API keys (inside the backend container). Backed by a volume in Compose. |
+| `AUTH_DB_PATH` | No | `backend/data/auth.db` (local) / `/app/data/auth.db` (Compose) | Path to SQLite DB for auth/workspaces/breweries/suppliers + API keys. Keep this on persistent storage. |
 
 **Example `.env`:**
 
@@ -342,6 +342,12 @@ DEFAULT_MODEL=llama3.2:1b
 - **OpenAI:** Set `OPENAI_API_KEY` in `.env` or in **Settings**. Use model names like `gpt-4o` or `gpt-4o-mini`.
 
 Keys stored in Settings are saved in the backend (SQLite) and used in preference to environment variables. The app never sends keys to the frontend; only masked status is shown.
+
+### Data persistence across deploys
+
+- The backend now defaults to a stable DB location (`backend/data/auth.db`) for local runs and auto-migrates legacy `auth.db` into that path on first startup.
+- In Docker Compose, `./backend/data` is mounted to `/app/data`, so data survives container rebuilds.
+- For platforms with ephemeral filesystems (for example Heroku dynos), SQLite files are not durable across redeploy/restart unless you attach persistent disk storage. In those environments, set `AUTH_DB_PATH` to persistent storage or move to managed DB.
 
 ---
 

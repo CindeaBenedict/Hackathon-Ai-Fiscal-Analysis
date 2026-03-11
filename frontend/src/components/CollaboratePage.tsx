@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { Brewery } from "./BreweriesPage";
+import type { Supplier } from "./SuppliersPage";
 
 export type Workspace = {
   id: number;
@@ -30,6 +31,7 @@ type CollaboratePageProps = {
   onCurrentWorkspaceChange: (ws: Workspace | null) => void;
   onLoadWorkspaceState?: (config: Record<string, unknown> | null, results: Record<string, unknown> | null) => void;
   breweries: Brewery[];
+  suppliers: Supplier[];
   currentBrewery: Brewery | null;
   onSaveWorkspaceState?: (config: Record<string, unknown>, results: Record<string, unknown> | null) => void;
 };
@@ -44,6 +46,7 @@ export default function CollaboratePage({
   onCurrentWorkspaceChange,
   onLoadWorkspaceState,
   breweries,
+  suppliers,
   currentBrewery,
   onSaveWorkspaceState,
 }: CollaboratePageProps) {
@@ -59,6 +62,7 @@ export default function CollaboratePage({
   const [liveSyncEnabled, setLiveSyncEnabled] = useState(true);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [workspaceBreweries, setWorkspaceBreweries] = useState<Brewery[]>([]);
+  const [workspaceSuppliers, setWorkspaceSuppliers] = useState<Supplier[]>([]);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [aiReport, setAiReport] = useState<string>("");
   const [aiReportLoading, setAiReportLoading] = useState(false);
@@ -82,6 +86,24 @@ export default function CollaboratePage({
         efficiency_score: Number(x.efficiency_score ?? 50),
         popularity_score: Number(x.popularity_score ?? 50),
         sustainability_score: Number(x.sustainability_score ?? 50),
+        created_at: String(x.created_at ?? new Date().toISOString()),
+      }));
+  };
+
+  const extractSuppliersFromConfig = (config: Record<string, unknown> | null): Supplier[] => {
+    if (!config || !Array.isArray(config.suppliers)) return [];
+    return config.suppliers
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+      .map((x, idx) => ({
+        id: typeof x.id === "number" ? x.id : idx + 1,
+        name: String(x.name ?? "Unnamed Supplier"),
+        category: String(x.category ?? "other") as Supplier["category"],
+        lat: Number(x.lat ?? 0),
+        lng: Number(x.lng ?? 0),
+        address: String(x.address ?? ""),
+        unit_price: Number(x.unit_price ?? 0),
+        shipping_cost_per_km: Number(x.shipping_cost_per_km ?? 0),
+        lead_time_days: Number(x.lead_time_days ?? 3),
         created_at: String(x.created_at ?? new Date().toISOString()),
       }));
   };
@@ -232,6 +254,7 @@ export default function CollaboratePage({
       if (data.state?.config || data.state?.results) {
         onLoadWorkspaceState(data.state?.config ?? null, data.state?.results ?? null);
         setWorkspaceBreweries(extractBreweriesFromConfig(data.state?.config ?? null));
+        setWorkspaceSuppliers(extractSuppliersFromConfig(data.state?.config ?? null));
         if (data.state?.updated_at) {
           lastWorkspaceStateUpdatedAt.current = data.state.updated_at;
           setLastSyncedAt(data.state.updated_at);
@@ -242,6 +265,25 @@ export default function CollaboratePage({
       }
     } catch {
       setMessage({ type: "err", text: "Could not load workspace state." });
+    }
+  };
+
+  const activateWorkspace = async (ws: Workspace | null) => {
+    onCurrentWorkspaceChange(ws);
+    if (!ws || !onLoadWorkspaceState) return;
+    try {
+      const r = await authFetch(`${apiBaseUrl}/workspaces/${ws.id}`);
+      if (!r.ok) return;
+      const data = (await r.json()) as WorkspaceWithState;
+      onLoadWorkspaceState(data.state?.config ?? null, data.state?.results ?? null);
+      setWorkspaceBreweries(extractBreweriesFromConfig(data.state?.config ?? null));
+      setWorkspaceSuppliers(extractSuppliersFromConfig(data.state?.config ?? null));
+      if (data.state?.updated_at) {
+        lastWorkspaceStateUpdatedAt.current = data.state.updated_at;
+        setLastSyncedAt(data.state.updated_at);
+      }
+    } catch {
+      // ignore; workspace selection still updates
     }
   };
 
@@ -360,6 +402,14 @@ export default function CollaboratePage({
     return Array.from(map.values());
   };
 
+  const mergeSuppliers = (base: Supplier[], incoming: Supplier[]): Supplier[] => {
+    const key = (s: Supplier) => `${s.name.toLowerCase()}|${s.category}|${s.lat.toFixed(5)}|${s.lng.toFixed(5)}`;
+    const map = new Map<string, Supplier>();
+    for (const s of base) map.set(key(s), s);
+    for (const s of incoming) map.set(key(s), s);
+    return Array.from(map.values());
+  };
+
   const importAndMergeSnapshot = async (file: File) => {
     if (!currentWorkspace || !onSaveWorkspaceState) return;
     setSnapshotLoading(true);
@@ -371,14 +421,18 @@ export default function CollaboratePage({
       const incomingResults = (snapshot.state?.results ?? null) as Record<string, unknown> | null;
       const incomingBreweries = extractBreweriesFromConfig(incomingConfig);
       const mergedBreweries = mergeBreweries(breweries, incomingBreweries);
+      const incomingSuppliers = extractSuppliersFromConfig(incomingConfig);
+      const mergedSuppliers = mergeSuppliers(suppliers, incomingSuppliers);
       const mergedConfig: Record<string, unknown> = {
         ...(incomingConfig || {}),
         breweries: mergedBreweries,
+        suppliers: mergedSuppliers,
         currentBreweryId: currentBrewery?.id ?? incomingConfig.currentBreweryId ?? null,
       };
       onSaveWorkspaceState(mergedConfig, incomingResults);
       onLoadWorkspaceState?.(mergedConfig, incomingResults);
       setWorkspaceBreweries(mergedBreweries);
+      setWorkspaceSuppliers(mergedSuppliers);
       setMessage({ type: "ok", text: "Snapshot merged into workspace." });
     } catch {
       setMessage({ type: "err", text: "Invalid snapshot file." });
@@ -404,6 +458,7 @@ export default function CollaboratePage({
           lastWorkspaceStateUpdatedAt.current = updatedAt;
           setLastSyncedAt(updatedAt);
           setWorkspaceBreweries(extractBreweriesFromConfig(data.state?.config ?? null));
+          setWorkspaceSuppliers(extractSuppliersFromConfig(data.state?.config ?? null));
           onLoadWorkspaceState(data.state?.config ?? null, data.state?.results ?? null);
         })
         .catch(() => {});
@@ -425,7 +480,7 @@ export default function CollaboratePage({
   ]);
 
   return (
-    <section className="panel" style={{ maxWidth: "48rem" }}>
+    <section className="collaborate-page">
       <h2>Collaborate</h2>
       <p className="muted" style={{ marginBottom: "1rem" }}>
         Share workspaces with your team, add context with descriptions, and export shared simulation state as CSV.
@@ -523,7 +578,7 @@ export default function CollaboratePage({
                     <button
                       type="button"
                       className={currentWorkspace?.id === ws.id ? "primary-button" : "secondary-button"}
-                      onClick={() => onCurrentWorkspaceChange(currentWorkspace?.id === ws.id ? null : ws)}
+                      onClick={() => void activateWorkspace(currentWorkspace?.id === ws.id ? null : ws)}
                     >
                       {currentWorkspace?.id === ws.id ? "Active" : "Use this"}
                     </button>
@@ -605,14 +660,27 @@ export default function CollaboratePage({
 
         {currentWorkspace && (
           <div className="panel" style={{ padding: "1rem", background: "var(--bg-2)" }}>
-            <h3 style={{ marginBottom: "0.5rem" }}>Breweries in this workspace</h3>
-            {workspaceBreweries.length === 0 ? (
-              <p className="muted">No breweries saved in workspace state yet.</p>
-            ) : (
-              <p className="muted">
-                {workspaceBreweries.map((b) => b.name).join(", ")}
-              </p>
-            )}
+            <h3 style={{ marginBottom: "0.5rem" }}>Breweries & suppliers in this workspace</h3>
+            <div style={{ display: "grid", gap: "0.5rem" }}>
+              <div>
+                <strong style={{ fontSize: "0.82rem" }}>Breweries</strong>
+                {workspaceBreweries.length === 0 ? (
+                  <p className="muted">No breweries saved in workspace state yet.</p>
+                ) : (
+                  <p className="muted">{workspaceBreweries.map((b) => b.name).join(", ")}</p>
+                )}
+              </div>
+              <div>
+                <strong style={{ fontSize: "0.82rem" }}>Suppliers</strong>
+                {workspaceSuppliers.length === 0 ? (
+                  <p className="muted">No suppliers saved in workspace state yet.</p>
+                ) : (
+                  <p className="muted">
+                    {workspaceSuppliers.map((s) => `${s.name} (${s.category})`).join(", ")}
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

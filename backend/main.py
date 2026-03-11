@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import replace
 import math
 import os
@@ -221,6 +221,7 @@ def _extract_session_token(authorization: str | None, cookie_token: str | None) 
 
 
 def _set_auth_cookie(response: Response, token: str) -> None:
+    expires_at = datetime.utcnow() + timedelta(hours=SESSION_TTL_HOURS)
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=token,
@@ -228,6 +229,7 @@ def _set_auth_cookie(response: Response, token: str) -> None:
         secure=AUTH_COOKIE_SECURE,
         samesite=AUTH_COOKIE_SAMESITE,
         max_age=SESSION_TTL_HOURS * 3600,
+        expires=expires_at,
         path="/",
     )
 
@@ -1502,6 +1504,68 @@ def suppliers_delete(
     if not delete_supplier(supplier_id, user_id):
         raise HTTPException(status_code=404, detail="Supplier not found.")
     return {"ok": True}
+
+
+@api.post("/demo/bootstrap-sample-data")
+def demo_bootstrap_sample_data(
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> dict:
+    """
+    Create a small tutorial dataset for new users.
+    Safe to call multiple times: only seeds when the user has no breweries/suppliers.
+    """
+    user_id, _ = auth
+    existing_breweries = list_breweries_for_user(user_id)
+    existing_suppliers = list_suppliers_for_user(user_id)
+    if existing_breweries or existing_suppliers:
+        return {"ok": True, "seeded": False, "breweries_created": 0, "suppliers_created": 0}
+
+    demo_breweries = [
+        {
+            "name": "Downtown Craft Works",
+            "lat": 41.8819,
+            "lng": -87.6278,
+            "address": "Chicago, IL",
+            "description": "Tutorial brewery focused on balanced output.",
+            "avg_monthly_revenue": 185000.0,
+            "quality_score": 82.0,
+            "efficiency_score": 77.0,
+            "popularity_score": 79.0,
+            "sustainability_score": 74.0,
+        },
+        {
+            "name": "Harbor Hops Co.",
+            "lat": 37.7749,
+            "lng": -122.4194,
+            "address": "San Francisco, CA",
+            "description": "Tutorial brewery with premium product positioning.",
+            "avg_monthly_revenue": 212000.0,
+            "quality_score": 88.0,
+            "efficiency_score": 72.0,
+            "popularity_score": 85.0,
+            "sustainability_score": 81.0,
+        },
+    ]
+    demo_suppliers = [
+        {"name": "GlassLine Bottles", "category": "bottles", "lat": 41.75, "lng": -87.69, "address": "Chicago Metro", "unit_price": 0.24, "shipping_cost_per_km": 0.08, "lead_time_days": 4},
+        {"name": "CapForge", "category": "caps", "lat": 41.90, "lng": -87.74, "address": "Chicago Metro", "unit_price": 0.05, "shipping_cost_per_km": 0.04, "lead_time_days": 3},
+        {"name": "MaltHub Central", "category": "malt", "lat": 42.02, "lng": -88.15, "address": "Illinois", "unit_price": 0.36, "shipping_cost_per_km": 0.09, "lead_time_days": 5},
+        {"name": "YeastWorks", "category": "yeast", "lat": 41.84, "lng": -87.60, "address": "Chicago, IL", "unit_price": 0.11, "shipping_cost_per_km": 0.03, "lead_time_days": 2},
+        {"name": "BlueRiver Water", "category": "water", "lat": 41.70, "lng": -87.60, "address": "Lake County", "unit_price": 0.02, "shipping_cost_per_km": 0.02, "lead_time_days": 1},
+        {"name": "FuelGrid Logistics", "category": "fuel", "lat": 41.95, "lng": -87.82, "address": "Chicago, IL", "unit_price": 1.35, "shipping_cost_per_km": 0.17, "lead_time_days": 2},
+    ]
+
+    for b in demo_breweries:
+        create_brewery(user_id=user_id, **b)
+    for s in demo_suppliers:
+        create_supplier(user_id=user_id, **s)
+
+    return {
+        "ok": True,
+        "seeded": True,
+        "breweries_created": len(demo_breweries),
+        "suppliers_created": len(demo_suppliers),
+    }
 
 
 @api.post("/auth/register", response_model=AuthResponse)

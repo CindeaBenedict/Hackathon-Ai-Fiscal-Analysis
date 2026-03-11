@@ -5,12 +5,14 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta
 import re
+from db_path import migrate_legacy_db_if_needed, resolve_db_path
 
 
-DB_PATH = os.getenv("AUTH_DB_PATH", "auth.db")
-SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "24"))
+DB_PATH = resolve_db_path()
+SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "720"))
 RESET_TOKEN_TTL_MINUTES = int(os.getenv("RESET_TOKEN_TTL_MINUTES", "30"))
 AUTH_SCHEMA_VERSION = 3
+ALLOW_EPHEMERAL_DB_FALLBACK = os.getenv("ALLOW_EPHEMERAL_DB_FALLBACK", "0").strip().lower() in {"1", "true", "yes"}
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -26,15 +28,26 @@ def _get_conn() -> sqlite3.Connection:
         conn.row_factory = sqlite3.Row
         return conn
     except (sqlite3.OperationalError, OSError) as e:
-        fallback = "/tmp/team28_auth.db"
-        if os.path.normpath(DB_PATH) != os.path.normpath(fallback):
-            print(f"Warning: DB not writable ({e}), using {fallback}", file=sys.stderr)
-            DB_PATH = fallback
-            return _get_conn()
+        if ALLOW_EPHEMERAL_DB_FALLBACK:
+            fallback = "/tmp/team28_auth.db"
+            if os.path.normpath(DB_PATH) != os.path.normpath(fallback):
+                print(
+                    f"Warning: DB not writable ({e}), using ephemeral fallback {fallback}",
+                    file=sys.stderr,
+                )
+                DB_PATH = fallback
+                return _get_conn()
+        print(
+            f"Fatal DB error for {DB_PATH}: {e}. "
+            "Refusing ephemeral fallback to avoid data loss. "
+            "Set AUTH_DB_PATH to persistent storage (or set ALLOW_EPHEMERAL_DB_FALLBACK=1 explicitly).",
+            file=sys.stderr,
+        )
         raise
 
 
 def init_auth_db() -> None:
+    migrate_legacy_db_if_needed(DB_PATH)
     with _get_conn() as conn:
         conn.execute(
             """

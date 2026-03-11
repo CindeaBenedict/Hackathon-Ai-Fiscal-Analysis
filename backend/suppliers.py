@@ -2,8 +2,9 @@
 import os
 import sqlite3
 from datetime import datetime
+from db_path import resolve_db_path
 
-DB_PATH = os.getenv("AUTH_DB_PATH", "auth.db")
+DB_PATH = resolve_db_path()
 SUPPLIERS_SCHEMA_VERSION = 1
 
 

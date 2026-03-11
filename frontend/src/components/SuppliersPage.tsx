@@ -1,4 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 export type SupplierCategory = "bottles" | "caps" | "malt" | "yeast" | "ingredients" | "water" | "fuel" | "other";
 
@@ -23,6 +26,31 @@ type SuppliersPageProps = {
 };
 
 const CATEGORIES: SupplierCategory[] = ["bottles", "caps", "malt", "yeast", "ingredients", "water", "fuel", "other"];
+
+const defaultIcon = L.icon({
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41],
+});
+L.Marker.prototype.options.icon = defaultIcon;
+
+function FitSupplierBounds({ suppliers }: { suppliers: Supplier[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (suppliers.length === 0) return;
+    if (suppliers.length === 1) {
+      map.setView([suppliers[0].lat, suppliers[0].lng], 10);
+      return;
+    }
+    const bounds = L.latLngBounds(suppliers.map((s) => [s.lat, s.lng] as L.LatLngTuple));
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+  }, [map, suppliers]);
+  return null;
+}
 
 export default function SuppliersPage({ apiBaseUrl, authFetch, suppliers, onSuppliersChange }: SuppliersPageProps) {
   const [loading, setLoading] = useState(false);
@@ -140,67 +168,93 @@ export default function SuppliersPage({ apiBaseUrl, authFetch, suppliers, onSupp
   };
 
   return (
-    <section className="panel">
-      <h2>Suppliers & Input Sources</h2>
-      <p className="muted" style={{ marginBottom: 12 }}>
-        Add where your bottles, caps, malt, yeast, water and fuel come from. Simulation now uses brewery-to-supplier distance and shipping prices.
-      </p>
-      {message ? <p className="muted">{message}</p> : null}
+    <section className="suppliers-page">
+      <div className="suppliers-layout">
+        <div className="suppliers-list-panel">
+          <h2>Suppliers & Input Sources</h2>
+          <p className="muted" style={{ marginBottom: 12 }}>
+            Add where your bottles, caps, malt, yeast, water and fuel come from. Simulation uses distance + shipping in math.
+          </p>
+          {message ? <p className="muted">{message}</p> : null}
 
-      <form onSubmit={submit} style={{ marginBottom: 14 }}>
-        <div className="controls-grid">
-          <label>Supplier Name<input value={name} onChange={(e) => setName(e.target.value)} /></label>
-          <label>Category
-            <select value={category} onChange={(e) => setCategory(e.target.value as SupplierCategory)}>
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </label>
-          <label>Latitude<input value={lat} onChange={(e) => setLat(e.target.value)} /></label>
-          <label>Longitude<input value={lng} onChange={(e) => setLng(e.target.value)} /></label>
-          <label>Unit Price ($)<input type="number" min={0} value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} /></label>
-          <label>Shipping ($/km)<input type="number" min={0} value={shippingCostPerKm} onChange={(e) => setShippingCostPerKm(e.target.value)} /></label>
-          <label>Lead Time (days)<input type="number" min={0} value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value)} /></label>
-          <label>Address (optional)<input value={address} onChange={(e) => setAddress(e.target.value)} /></label>
-        </div>
-        <div className="actions-row" style={{ marginTop: 8 }}>
-          <button type="submit" className="primary-button" disabled={loading}>{loading ? "Saving..." : editingId == null ? "Add Supplier" : "Update Supplier"}</button>
-          {editingId != null ? <button type="button" className="secondary-button" onClick={clearForm}>Cancel</button> : null}
-        </div>
-      </form>
+          <form onSubmit={submit} style={{ marginBottom: 14 }}>
+            <div className="controls-grid">
+              <label>Supplier Name<input value={name} onChange={(e) => setName(e.target.value)} /></label>
+              <label>Category
+                <select value={category} onChange={(e) => setCategory(e.target.value as SupplierCategory)}>
+                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+              <label>Latitude<input value={lat} onChange={(e) => setLat(e.target.value)} /></label>
+              <label>Longitude<input value={lng} onChange={(e) => setLng(e.target.value)} /></label>
+              <label>Unit Price ($)<input type="number" min={0} value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} /></label>
+              <label>Shipping ($/km)<input type="number" min={0} value={shippingCostPerKm} onChange={(e) => setShippingCostPerKm(e.target.value)} /></label>
+              <label>Lead Time (days)<input type="number" min={0} value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value)} /></label>
+              <label>Address (optional)<input value={address} onChange={(e) => setAddress(e.target.value)} /></label>
+            </div>
+            <div className="actions-row" style={{ marginTop: 8 }}>
+              <button type="submit" className="primary-button" disabled={loading}>{loading ? "Saving..." : editingId == null ? "Add Supplier" : "Update Supplier"}</button>
+              {editingId != null ? <button type="button" className="secondary-button" onClick={clearForm}>Cancel</button> : null}
+            </div>
+          </form>
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: "left", padding: "6px 8px" }}>Name</th>
-              <th style={{ textAlign: "left", padding: "6px 8px" }}>Category</th>
-              <th style={{ textAlign: "right", padding: "6px 8px" }}>Unit $</th>
-              <th style={{ textAlign: "right", padding: "6px 8px" }}>Ship $/km</th>
-              <th style={{ textAlign: "right", padding: "6px 8px" }}>Lead days</th>
-              <th style={{ textAlign: "left", padding: "6px 8px" }}>Coords</th>
-              <th style={{ textAlign: "right", padding: "6px 8px" }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", padding: "6px 8px" }}>Name</th>
+                  <th style={{ textAlign: "left", padding: "6px 8px" }}>Category</th>
+                  <th style={{ textAlign: "right", padding: "6px 8px" }}>Unit $</th>
+                  <th style={{ textAlign: "right", padding: "6px 8px" }}>Ship $/km</th>
+                  <th style={{ textAlign: "right", padding: "6px 8px" }}>Lead days</th>
+                  <th style={{ textAlign: "left", padding: "6px 8px" }}>Coords</th>
+                  <th style={{ textAlign: "right", padding: "6px 8px" }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {suppliers.map((s) => (
+                  <tr key={s.id} style={{ borderTop: "1px solid var(--border)" }}>
+                    <td style={{ padding: "6px 8px" }}>{s.name}</td>
+                    <td style={{ padding: "6px 8px", textTransform: "capitalize" }}>{s.category}</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>{s.unit_price.toFixed(2)}</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>{s.shipping_cost_per_km.toFixed(3)}</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>{s.lead_time_days}</td>
+                    <td style={{ padding: "6px 8px" }}>{s.lat.toFixed(3)}, {s.lng.toFixed(3)}</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                      <button type="button" className="secondary-button" onClick={() => edit(s)} style={{ marginRight: 6 }}>Edit</button>
+                      <button type="button" className="secondary-button" onClick={() => void remove(s.id)}>Delete</button>
+                    </td>
+                  </tr>
+                ))}
+                {suppliers.length === 0 ? (
+                  <tr><td colSpan={7} className="muted" style={{ padding: "8px" }}>No suppliers yet.</td></tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="suppliers-map-wrap">
+          <MapContainer center={[39.5, -98]} zoom={4} className="suppliers-map">
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            <FitSupplierBounds suppliers={suppliers} />
             {suppliers.map((s) => (
-              <tr key={s.id} style={{ borderTop: "1px solid var(--border)" }}>
-                <td style={{ padding: "6px 8px" }}>{s.name}</td>
-                <td style={{ padding: "6px 8px", textTransform: "capitalize" }}>{s.category}</td>
-                <td style={{ padding: "6px 8px", textAlign: "right" }}>{s.unit_price.toFixed(2)}</td>
-                <td style={{ padding: "6px 8px", textAlign: "right" }}>{s.shipping_cost_per_km.toFixed(3)}</td>
-                <td style={{ padding: "6px 8px", textAlign: "right" }}>{s.lead_time_days}</td>
-                <td style={{ padding: "6px 8px" }}>{s.lat.toFixed(3)}, {s.lng.toFixed(3)}</td>
-                <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                  <button type="button" className="secondary-button" onClick={() => edit(s)} style={{ marginRight: 6 }}>Edit</button>
-                  <button type="button" className="secondary-button" onClick={() => void remove(s.id)}>Delete</button>
-                </td>
-              </tr>
+              <Marker key={s.id} position={[s.lat, s.lng]}>
+                <Popup>
+                  <strong>{s.name}</strong>
+                  <br />
+                  <span style={{ textTransform: "capitalize" }}>{s.category}</span>
+                  {s.address ? <><br />{s.address}</> : null}
+                  <br />
+                  <span className="muted">Unit ${s.unit_price.toFixed(2)} | Ship ${s.shipping_cost_per_km.toFixed(3)}/km</span>
+                </Popup>
+              </Marker>
             ))}
-            {suppliers.length === 0 ? (
-              <tr><td colSpan={7} className="muted" style={{ padding: "8px" }}>No suppliers yet.</td></tr>
-            ) : null}
-          </tbody>
-        </table>
+          </MapContainer>
+        </div>
       </div>
     </section>
   );

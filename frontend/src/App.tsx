@@ -7,6 +7,7 @@ import SettingsPage from "./components/SettingsPage";
 import CollaboratePage, { STORAGE_KEY as WORKSPACE_STORAGE_KEY } from "./components/CollaboratePage";
 import BreweriesPage, { Brewery } from "./components/BreweriesPage";
 import SuppliersPage, { Supplier } from "./components/SuppliersPage";
+import CoolErrorPage from "./components/CoolErrorPage";
 import type { Workspace } from "./components/CollaboratePage";
 
 type SimulationResponse = SimulationResults;
@@ -23,6 +24,44 @@ const API_BASE_URL = rawApiBaseUrl.length > 0
 const DEFAULT_APP_DOWNLOAD_URL = "https://gitlab.com/next-level-challenge/team-28";
 const APP_DOWNLOAD_URL = (import.meta.env.VITE_APP_DOWNLOAD_URL ?? "").trim() || DEFAULT_APP_DOWNLOAD_URL;
 const COOKIE_SESSION_TOKEN = "__cookie_session__";
+const LOCAL_STATE_KEY_PREFIX = "supply_chain_local_state_v1";
+const DEMO_SEEDED_KEY_PREFIX = "supply_chain_demo_seeded_v1";
+const ACTIVE_PAGE_STORAGE_KEY = "supply_chain_active_page_v1";
+const MATRIX_AUDIO_SOURCES = [
+  "/matrix-theme.mp3",
+  "/clubbed%20to%20death%20-%20Matrix%20soundtrack.mp3",
+];
+
+type AppPage = "dashboard" | "logs" | "theory" | "collaborate" | "breweries" | "suppliers" | "settings";
+
+function isAppPage(value: string): value is AppPage {
+  return ["dashboard", "logs", "theory", "collaborate", "breweries", "suppliers", "settings"].includes(value);
+}
+
+function classifyErrorVariant(errorText: string): "network" | "server" | "validation" | "generic" {
+  const text = errorText.toLowerCase();
+  if (
+    text.includes("failed to fetch")
+    || text.includes("network")
+    || text.includes("connection")
+    || text.includes("cors")
+  ) {
+    return "network";
+  }
+  if (text.includes("http 5") || text.includes("internal server") || text.includes("unavailable")) {
+    return "server";
+  }
+  if (
+    text.includes("password")
+    || text.includes("invalid")
+    || text.includes("required")
+    || text.includes("must")
+    || text.includes("does not match")
+  ) {
+    return "validation";
+  }
+  return "generic";
+}
 
 function uid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -43,9 +82,10 @@ const DEFAULT_ORDER_BY_STRATEGY: Record<Strategy, number> = {
 };
 
 function App() {
-  const [activePage, setActivePage] = useState<
-    "dashboard" | "logs" | "theory" | "collaborate" | "breweries" | "suppliers" | "settings"
-  >("dashboard");
+  const [activePage, setActivePage] = useState<AppPage>(() => {
+    const stored = localStorage.getItem(ACTIVE_PAGE_STORAGE_KEY);
+    return stored && isAppPage(stored) ? stored : "dashboard";
+  });
   const [darkMode, setDarkMode] = useState(true);
   const [strategy, setStrategy] = useState<Strategy>("custom");
   const [customOrderQuantity, setCustomOrderQuantity] = useState<number>(100);
@@ -88,9 +128,14 @@ function App() {
   const [forgotNewPasswordInput, setForgotNewPasswordInput] = useState("");
   const [forgotConfirmPasswordInput, setForgotConfirmPasswordInput] = useState("");
   const [generatedResetToken, setGeneratedResetToken] = useState<string>("");
+  const [matrixModeEnabled, setMatrixModeEnabled] = useState(false);
+  const [matrixHint, setMatrixHint] = useState("");
   const bootstrapStarted = useRef(false);
   const simulationAbortRef = useRef<AbortController | null>(null);
   const workspaceUpdatedAtRef = useRef<string | null>(null);
+  const demoBootstrapStarted = useRef(false);
+  const matrixAudioRef = useRef<HTMLAudioElement | null>(null);
+  const matrixTapStateRef = useRef({ count: 0, lastTapAt: 0 });
 
   function buildWorkspaceConfig() {
     return {
@@ -107,6 +152,10 @@ function App() {
       suppliers,
       currentBreweryId: currentBrewery?.id ?? null,
     };
+  }
+
+  function localStateKey() {
+    return `${LOCAL_STATE_KEY_PREFIX}:${username || "guest"}`;
   }
 
   function saveWorkspaceState(config: Record<string, unknown>, resultsData: Record<string, unknown> | null) {
@@ -145,7 +194,7 @@ function App() {
     }
   }
   const railItems: Array<{
-    id: "dashboard" | "logs" | "theory" | "collaborate" | "breweries" | "suppliers" | "settings";
+    id: AppPage;
     title: string;
     icon: React.ReactNode;
   }> = [
@@ -252,6 +301,61 @@ function App() {
       },
       ...prev,
     ]);
+  }
+
+  function ensureMatrixAudio() {
+    if (matrixAudioRef.current) return matrixAudioRef.current;
+    const audio = new Audio(MATRIX_AUDIO_SOURCES[0]);
+    audio.loop = true;
+    audio.volume = 0.5;
+    audio.preload = "auto";
+    matrixAudioRef.current = audio;
+    return audio;
+  }
+
+  async function playMatrixAudioWithFallback(audio: HTMLAudioElement) {
+    for (const src of MATRIX_AUDIO_SOURCES) {
+      try {
+        if (!audio.src.endsWith(src)) {
+          audio.src = src;
+          audio.load();
+        }
+        await audio.play();
+        return true;
+      } catch {
+        // Try next source path.
+      }
+    }
+    return false;
+  }
+
+  async function toggleMatrixMode() {
+    const audio = ensureMatrixAudio();
+    if (matrixModeEnabled) {
+      audio.pause();
+      audio.currentTime = 0;
+      setMatrixModeEnabled(false);
+      setMatrixHint("Matrix mode disabled.");
+      return;
+    }
+    const played = await playMatrixAudioWithFallback(audio);
+    if (!played) {
+      setMatrixHint("Matrix audio not found. Put the MP3 in frontend/public as matrix-theme.mp3.");
+      return;
+    }
+    setMatrixModeEnabled(true);
+    setMatrixHint("Wake up, Neo.");
+  }
+
+  function handleTopbarLogoClick() {
+    const now = Date.now();
+    const withinComboWindow = now - matrixTapStateRef.current.lastTapAt <= 1200;
+    const nextCount = withinComboWindow ? matrixTapStateRef.current.count + 1 : 1;
+    matrixTapStateRef.current = { count: nextCount, lastTapAt: now };
+    if (nextCount >= 5) {
+      matrixTapStateRef.current = { count: 0, lastTapAt: 0 };
+      void toggleMatrixMode();
+    }
   }
 
   function authFetch(url: string, init?: RequestInit) {
@@ -840,6 +944,10 @@ function App() {
   }
 
   useEffect(() => {
+    localStorage.setItem(ACTIVE_PAGE_STORAGE_KEY, activePage);
+  }, [activePage]);
+
+  useEffect(() => {
     if (authToken) return;
     if (bootstrapStarted.current) return;
     bootstrapStarted.current = true;
@@ -868,6 +976,53 @@ function App() {
     }
   }, [activePage, authToken]);
 
+  useEffect(() => {
+    if (!authToken || !username) return;
+    if (currentWorkspace) return;
+    try {
+      const raw = localStorage.getItem(localStateKey());
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        config?: Record<string, unknown> | null;
+        results?: Record<string, unknown> | null;
+      };
+      loadWorkspaceState(parsed.config ?? null, parsed.results ?? null);
+    } catch {
+      // ignore invalid local snapshot
+    }
+  }, [authToken, username, currentWorkspace]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!authToken || !username) return;
+    if (currentWorkspace) return;
+    const config = buildWorkspaceConfig();
+    try {
+      localStorage.setItem(
+        localStateKey(),
+        JSON.stringify({ config, results }),
+      );
+    } catch {
+      // ignore storage errors
+    }
+  }, [
+    authToken,
+    username,
+    currentWorkspace,
+    strategy,
+    customOrderQuantity,
+    simulations,
+    initialCash,
+    demandStdDev,
+    weeklyFixedCost,
+    bankruptcyThreshold,
+    salePrice,
+    aiModel,
+    breweries,
+    suppliers,
+    currentBrewery?.id,
+    results,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Restore current workspace from localStorage once we have auth
   useEffect(() => {
     if (!authToken) return;
@@ -886,6 +1041,36 @@ function App() {
       })
       .catch(() => {});
   }, [authToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!authToken || !username) return;
+    if (demoBootstrapStarted.current) return;
+    if (breweries.length > 0 || suppliers.length > 0) return;
+    const seededKey = `${DEMO_SEEDED_KEY_PREFIX}:${username}`;
+    if (localStorage.getItem(seededKey) === "1") return;
+    demoBootstrapStarted.current = true;
+    authFetch(`${API_BASE_URL}/demo/bootstrap-sample-data`, { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(async (data) => {
+        if (!data || !(data as { seeded?: boolean }).seeded) return;
+        const [breweriesRes, suppliersRes] = await Promise.all([
+          authFetch(`${API_BASE_URL}/breweries`),
+          authFetch(`${API_BASE_URL}/suppliers`),
+        ]);
+        if (breweriesRes.ok) {
+          const b = (await breweriesRes.json()) as Brewery[];
+          setBreweries(b);
+        }
+        if (suppliersRes.ok) {
+          const s = (await suppliersRes.json()) as Supplier[];
+          setSuppliers(s);
+        }
+      })
+      .finally(() => {
+        localStorage.setItem(seededKey, "1");
+        demoBootstrapStarted.current = false;
+      });
+  }, [authToken, username, breweries.length, suppliers.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function loadWorkspaceState(config: Record<string, unknown> | null, resultsData: Record<string, unknown> | null) {
     if (config) {
@@ -995,6 +1180,14 @@ function App() {
     return () => clearInterval(interval);
   }, [authToken, currentWorkspace?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    return () => {
+      if (!matrixAudioRef.current) return;
+      matrixAudioRef.current.pause();
+      matrixAudioRef.current.currentTime = 0;
+    };
+  }, []);
+
   if (!authToken) {
     return (
       <div className={darkMode ? "" : "theme-light"}>
@@ -1005,7 +1198,15 @@ function App() {
             </div>
             <h2>Supply Chain Command</h2>
             <p>{authMode === "login" ? "Sign in to collaborate." : "Create an account for collaboration."}</p>
-            {error ? <p className="error" style={{ marginTop: 8, marginBottom: 4 }}>{error}</p> : null}
+            {error ? (
+              <CoolErrorPage
+                title="Authentication Error"
+                message={error}
+                variant={classifyErrorVariant(error)}
+                compact
+                onDismiss={() => setError("")}
+              />
+            ) : null}
             {!authShowForgot ? (
               <div style={{ display: "grid", gap: 8, width: "100%" }}>
                 <input
@@ -1162,10 +1363,22 @@ function App() {
         <header className="topbar">
           <div className="topbar-brand">
             <div className="topbar-brand-row">
-              <img src="/logo-tight.png" alt="" className="topbar-logo" />
+              <img
+                src="/logo-tight.png"
+                alt=""
+                className="topbar-logo"
+                onClick={handleTopbarLogoClick}
+                title="System logo"
+                style={{ cursor: "pointer" }}
+              />
             </div>
           </div>
           <div className="topbar-right">
+            {matrixHint ? (
+              <span className="muted" style={{ fontSize: "0.75rem" }}>
+                {matrixHint}
+              </span>
+            ) : null}
             <span className="user-chip">@{username || "guest"}</span>
             {isWebInterface ? (
               <button
@@ -1230,7 +1443,15 @@ function App() {
                 isLoading={isLoading}
                 apiBaseUrl={API_BASE_URL}
               />
-              {error ? <p className="error">{error}</p> : null}
+              {error ? (
+                <CoolErrorPage
+                  title="Simulation Error"
+                  message={error}
+                  variant={classifyErrorVariant(error)}
+                  onRetry={() => void runSimulation()}
+                  onDismiss={() => setError("")}
+                />
+              ) : null}
 
               {/* ── Compare Strategies ──────────────────────────────────── */}
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -1376,6 +1597,7 @@ function App() {
               onCurrentWorkspaceChange={setCurrentWorkspace}
               onLoadWorkspaceState={loadWorkspaceState}
               breweries={breweries}
+              suppliers={suppliers}
               currentBrewery={currentBrewery}
               onSaveWorkspaceState={(config, resultsData) => saveWorkspaceState(config, resultsData)}
             />
