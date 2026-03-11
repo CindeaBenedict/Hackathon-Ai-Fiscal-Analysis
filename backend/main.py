@@ -80,6 +80,8 @@ from models import (
     WorkspaceAIReportRequest,
     WorkspaceDescriptionUpdateRequest,
     WorkspaceAIReportResponse,
+    WorkspaceAnalysisResponse,
+    WorkspaceBreweryAnalysisItem,
     WorkspaceJoinRequest,
     WorkspaceStateUpdateRequest,
     BreweryCreateRequest,
@@ -1084,6 +1086,155 @@ def _plain_text(value: object) -> str:
     return re.sub(r"<[^>]+>", " ", text).strip()
 
 
+def _as_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _extract_workspace_breweries(config: dict | None) -> list[dict]:
+    if not isinstance(config, dict) or not isinstance(config.get("breweries"), list):
+        return []
+    breweries: list[dict] = []
+    for idx, b in enumerate(config.get("breweries") or []):
+        if not isinstance(b, dict):
+            continue
+        breweries.append(
+            {
+                "id": int(b.get("id") or (idx + 1)),
+                "name": str(b.get("name") or f"Brewery {idx + 1}"),
+                "lat": _as_float(b.get("lat"), 0.0),
+                "lng": _as_float(b.get("lng"), 0.0),
+                "avg_monthly_revenue": _as_float(b.get("avg_monthly_revenue"), 0.0),
+                "quality_score": _as_float(b.get("quality_score"), 50.0),
+                "efficiency_score": _as_float(b.get("efficiency_score"), 50.0),
+                "popularity_score": _as_float(b.get("popularity_score"), 50.0),
+                "sustainability_score": _as_float(b.get("sustainability_score"), 50.0),
+            }
+        )
+    return breweries
+
+
+def _extract_workspace_suppliers(config: dict | None) -> list[dict]:
+    if not isinstance(config, dict) or not isinstance(config.get("suppliers"), list):
+        return []
+    suppliers: list[dict] = []
+    for s in config.get("suppliers") or []:
+        if not isinstance(s, dict):
+            continue
+        suppliers.append(
+            {
+                "name": str(s.get("name") or "Supplier"),
+                "category": str(s.get("category") or "other"),
+                "lat": _as_float(s.get("lat"), 0.0),
+                "lng": _as_float(s.get("lng"), 0.0),
+                "unit_price": _as_float(s.get("unit_price"), 0.0),
+                "shipping_cost_per_km": _as_float(s.get("shipping_cost_per_km"), 0.0),
+                "lead_time_days": _as_float(s.get("lead_time_days"), 3.0),
+            }
+        )
+    return suppliers
+
+
+def _workspace_brewery_supplier_metrics(brewery: dict, suppliers: list[dict]) -> dict:
+    categories_for_order = ["bottles", "caps", "malt", "yeast", "water", "ingredients"]
+    categories_for_weekly_fixed = ["fuel"]
+    required_categories = categories_for_order + categories_for_weekly_fixed
+    matched_categories: set[str] = set()
+    lead_times: list[float] = []
+    extra_order_cost = 0.0
+    extra_weekly_fixed = 0.0
+
+    for category in required_categories:
+        candidates = [s for s in suppliers if s.get("category") == category]
+        if not candidates:
+            continue
+        nearest_cost: float | None = None
+        nearest_supplier: dict | None = None
+        for s in candidates:
+            dist_km = _haversine_km(
+                _as_float(brewery.get("lat")),
+                _as_float(brewery.get("lng")),
+                _as_float(s.get("lat")),
+                _as_float(s.get("lng")),
+            )
+            delivered_cost = _as_float(s.get("unit_price")) + (_as_float(s.get("shipping_cost_per_km")) * dist_km)
+            if nearest_cost is None or delivered_cost < nearest_cost:
+                nearest_cost = delivered_cost
+                nearest_supplier = s
+        if nearest_supplier is None or nearest_cost is None:
+            continue
+        matched_categories.add(category)
+        lead_times.append(_as_float(nearest_supplier.get("lead_time_days"), 3.0))
+        if category in categories_for_order:
+            extra_order_cost += nearest_cost
+        else:
+            extra_weekly_fixed += nearest_cost
+
+    coverage = (len(matched_categories) / len(required_categories)) if required_categories else 0.0
+    avg_lead = (sum(lead_times) / len(lead_times)) if lead_times else 0.0
+    return {
+        "extra_order_cost": round(extra_order_cost, 4),
+        "extra_weekly_fixed_cost": round(extra_weekly_fixed, 4),
+        "supplier_coverage_ratio": round(coverage, 4),
+        "avg_supplier_lead_time_days": round(avg_lead, 4),
+    }
+
+
+def _workspace_analysis_from_state(config: dict | None) -> dict:
+    breweries = _extract_workspace_breweries(config)
+    suppliers = _extract_workspace_suppliers(config)
+    rankings: list[dict] = []
+    for b in breweries:
+        supplier_metrics = _workspace_brewery_supplier_metrics(b, suppliers)
+        ops_score = (
+            _as_float(b.get("quality_score")) * 0.30
+            + _as_float(b.get("efficiency_score")) * 0.30
+            + _as_float(b.get("popularity_score")) * 0.20
+            + _as_float(b.get("sustainability_score")) * 0.20
+        )
+        sourcing_penalty = (
+            supplier_metrics["extra_order_cost"] * 2.5
+            + supplier_metrics["extra_weekly_fixed_cost"] * 1.5
+            + max(0.0, (7.0 - (supplier_metrics["supplier_coverage_ratio"] * 7.0))) * 2.5
+            + supplier_metrics["avg_supplier_lead_time_days"] * 1.2
+        )
+        sourcing_score = max(0.0, 100.0 - sourcing_penalty)
+        combined_score = (ops_score * 0.65) + (sourcing_score * 0.35)
+        rankings.append(
+            {
+                "brewery_id": int(b["id"]),
+                "brewery_name": str(b["name"]),
+                "ops_score": round(ops_score, 3),
+                "sourcing_score": round(sourcing_score, 3),
+                "combined_score": round(combined_score, 3),
+                "estimated_extra_order_cost": supplier_metrics["extra_order_cost"],
+                "estimated_extra_weekly_fixed_cost": supplier_metrics["extra_weekly_fixed_cost"],
+                "supplier_coverage_ratio": supplier_metrics["supplier_coverage_ratio"],
+                "avg_supplier_lead_time_days": supplier_metrics["avg_supplier_lead_time_days"],
+            }
+        )
+
+    rankings.sort(key=lambda x: x["combined_score"], reverse=True)
+    best = rankings[0] if rankings else None
+    required_categories = {"bottles", "caps", "malt", "yeast", "water", "ingredients", "fuel"}
+    supplier_categories = {str(s.get("category")) for s in suppliers}
+    category_coverage_ratio = (
+        len(required_categories.intersection(supplier_categories)) / len(required_categories)
+        if required_categories
+        else 0.0
+    )
+    return {
+        "brewery_count": len(breweries),
+        "supplier_count": len(suppliers),
+        "category_coverage_ratio": round(category_coverage_ratio, 4),
+        "best_brewery_id": int(best["brewery_id"]) if best else None,
+        "best_brewery_name": str(best["brewery_name"]) if best else None,
+        "rankings": rankings,
+    }
+
+
 # ── Workspaces (collaboration) ─────────────────────────────────────────────
 
 @api.post("/workspaces")
@@ -1170,6 +1321,24 @@ def workspace_export_csv(
     )
 
 
+@api.post("/workspaces/{workspace_id}/analysis", response_model=WorkspaceAnalysisResponse)
+def workspace_analysis(
+    workspace_id: int,
+    auth: tuple[int, str] = Depends(require_auth_user),
+) -> WorkspaceAnalysisResponse:
+    """Crunch all workspace breweries with supplier-factor scoring and ranking."""
+    user_id, _ = auth
+    ws = get_workspace(workspace_id, user_id)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Workspace not found or access denied.")
+    state = ws.get("state") or {}
+    config = state.get("config") if isinstance(state, dict) else None
+    analysis = _workspace_analysis_from_state(config if isinstance(config, dict) else None)
+    if analysis.get("brewery_count", 0) == 0:
+        raise HTTPException(status_code=400, detail="Workspace has no breweries in saved state.")
+    return WorkspaceAnalysisResponse(**analysis)
+
+
 @api.post("/ai/workspaces/{workspace_id}/report", response_model=WorkspaceAIReportResponse)
 def workspace_ai_report(
     workspace_id: int,
@@ -1188,15 +1357,25 @@ def workspace_ai_report(
     if not config and not results:
         raise HTTPException(status_code=400, detail="Workspace has no saved state yet.")
 
-    breweries = list_breweries_for_user(user_id)
+    workspace_breweries = _extract_workspace_breweries(config if isinstance(config, dict) else None)
+    workspace_suppliers = _extract_workspace_suppliers(config if isinstance(config, dict) else None)
+    analysis = payload.analysis if isinstance(payload.analysis, dict) else _workspace_analysis_from_state(
+        config if isinstance(config, dict) else None
+    )
     workspace_name = str(ws.get("name", "Workspace"))
     workspace_description = _plain_text(ws.get("description", ""))
     brewery_lines = []
-    for b in breweries[:25]:
+    for b in workspace_breweries[:25]:
         brewery_lines.append(
-            f'- {b.get("name")} | revenue={b.get("avg_monthly_revenue", 0)} | '
-            f'quality={b.get("quality_score", 0)} | efficiency={b.get("efficiency_score", 0)} | '
-            f'popularity={b.get("popularity_score", 0)} | sustainability={b.get("sustainability_score", 0)}'
+            f'- {b.get("name")} | revenue={b.get("avg_monthly_revenue", 0)}'
+            f' | quality={b.get("quality_score", 0)} | efficiency={b.get("efficiency_score", 0)}'
+            f' | popularity={b.get("popularity_score", 0)} | sustainability={b.get("sustainability_score", 0)}'
+        )
+    supplier_lines = []
+    for s in workspace_suppliers[:40]:
+        supplier_lines.append(
+            f'- {s.get("name")} ({s.get("category")}) | unit={s.get("unit_price", 0)}'
+            f' | ship/km={s.get("shipping_cost_per_km", 0)} | lead_days={s.get("lead_time_days", 0)}'
         )
 
     prompt = f"""You are an operations strategist for brewery supply chains.
@@ -1215,11 +1394,18 @@ RESULTS:
 BREWERIES:
 {chr(10).join(brewery_lines) if brewery_lines else "(none)"}
 
+SUPPLIERS:
+{chr(10).join(supplier_lines) if supplier_lines else "(none)"}
+
+CRUNCHED ANALYSIS (brewery comparison including supplier factors):
+{analysis}
+
 Write:
 1) Executive summary (3-5 bullets)
-2) What is working
-3) Biggest risks
-4) Recommended next actions (5 bullets)
+2) Cross-brewery ranking rationale (why #1 beats others)
+3) What is working
+4) Biggest risks
+5) Recommended next actions (5 bullets)
 Keep it practical and specific."""
 
     model = (payload.model or os.getenv("DEFAULT_MODEL", "llama3.2:1b")).strip() or "llama3.2:1b"

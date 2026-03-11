@@ -23,6 +23,27 @@ type WorkspaceMember = {
   role: string;
 };
 
+type WorkspaceBreweryAnalysisItem = {
+  brewery_id: number;
+  brewery_name: string;
+  ops_score: number;
+  sourcing_score: number;
+  combined_score: number;
+  estimated_extra_order_cost: number;
+  estimated_extra_weekly_fixed_cost: number;
+  supplier_coverage_ratio: number;
+  avg_supplier_lead_time_days: number;
+};
+
+type WorkspaceAnalysis = {
+  brewery_count: number;
+  supplier_count: number;
+  category_coverage_ratio: number;
+  best_brewery_id: number | null;
+  best_brewery_name: string | null;
+  rankings: WorkspaceBreweryAnalysisItem[];
+};
+
 type CollaboratePageProps = {
   apiBaseUrl: string;
   authFetch: (url: string, init?: RequestInit) => Promise<Response>;
@@ -64,8 +85,9 @@ export default function CollaboratePage({
   const [workspaceBreweries, setWorkspaceBreweries] = useState<Brewery[]>([]);
   const [workspaceSuppliers, setWorkspaceSuppliers] = useState<Supplier[]>([]);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
-  const [aiReport, setAiReport] = useState<string>("");
   const [aiReportLoading, setAiReportLoading] = useState(false);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [workspaceAnalysis, setWorkspaceAnalysis] = useState<WorkspaceAnalysis | null>(null);
   const lastWorkspaceStateUpdatedAt = useRef<string | null>(null);
   const snapshotInputRef = useRef<HTMLInputElement | null>(null);
   const editorRef = useRef<HTMLDivElement | null>(null);
@@ -178,6 +200,7 @@ export default function CollaboratePage({
   useEffect(() => {
     if (!currentWorkspace) return;
     setEditDescription(currentWorkspace.description || "");
+    setWorkspaceAnalysis(null);
     if (editorRef.current) editorRef.current.innerHTML = sanitizeHtml(currentWorkspace.description || "");
     lastWorkspaceStateUpdatedAt.current = null;
     try {
@@ -371,26 +394,54 @@ export default function CollaboratePage({
   };
 
   const generateAiReport = async () => {
-    if (!currentWorkspace) return;
+    if (!currentWorkspace || !workspaceAnalysis) return;
     setAiReportLoading(true);
     setMessage(null);
     try {
       const r = await authFetch(`${apiBaseUrl}/ai/workspaces/${currentWorkspace.id}/report`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: aiModel }),
+        body: JSON.stringify({ model: aiModel, analysis: workspaceAnalysis }),
       });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
         throw new Error((d as { detail?: string }).detail ?? "Report failed");
       }
       const data = (await r.json()) as { model: string; report: string };
-      setAiReport(data.report || "");
-      setMessage({ type: "ok", text: "AI report generated." });
+      const safeText = String(data.report || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const reportHtml = `<h2>AI Workspace Report</h2><p>${safeText.replace(/\n/g, "<br/>")}</p>`;
+      const merged = sanitizeHtml(`${editDescription ? `${editDescription}<br/><br/>` : ""}${reportHtml}`);
+      setEditDescription(merged);
+      if (editorRef.current) editorRef.current.innerHTML = merged;
+      setMessage({ type: "ok", text: "AI report generated and inserted into workspace notes." });
     } catch (e) {
       setMessage({ type: "err", text: e instanceof Error ? e.message : "Could not generate report." });
     } finally {
       setAiReportLoading(false);
+    }
+  };
+
+  const crunchWorkspaceData = async () => {
+    if (!currentWorkspace) return;
+    setAnalysisLoading(true);
+    setMessage(null);
+    try {
+      const r = await authFetch(`${apiBaseUrl}/workspaces/${currentWorkspace.id}/analysis`, { method: "POST" });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error((d as { detail?: string }).detail ?? "Could not crunch workspace data.");
+      }
+      const data = (await r.json()) as WorkspaceAnalysis;
+      setWorkspaceAnalysis(data);
+      setMessage({
+        type: "ok",
+        text: `Data crunched. Best brewery: ${data.best_brewery_name || "N/A"}.`,
+      });
+    } catch (e) {
+      setWorkspaceAnalysis(null);
+      setMessage({ type: "err", text: e instanceof Error ? e.message : "Could not crunch workspace data." });
+    } finally {
+      setAnalysisLoading(false);
     }
   };
 
@@ -621,9 +672,19 @@ export default function CollaboratePage({
                   <button type="button" className="secondary-button" onClick={downloadWorkspaceCsv}>
                     Download CSV
                   </button>
-                  <button type="button" className="secondary-button" onClick={generateAiReport} disabled={aiReportLoading}>
-                    {aiReportLoading ? "Generating..." : "Generate AI report"}
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={crunchWorkspaceData}
+                    disabled={analysisLoading || aiReportLoading}
+                  >
+                    {analysisLoading ? "Crunching..." : "Crunch all data"}
                   </button>
+                  {workspaceAnalysis ? (
+                    <button type="button" className="secondary-button" onClick={generateAiReport} disabled={aiReportLoading}>
+                      {aiReportLoading ? "Generating..." : "Generate AI report"}
+                    </button>
+                  ) : null}
                   <button type="button" className="secondary-button" onClick={downloadWorkspaceSnapshot} disabled={snapshotLoading}>
                     {snapshotLoading ? "Working..." : "Download snapshot"}
                   </button>
@@ -647,14 +708,23 @@ export default function CollaboratePage({
                     }}
                   />
                 </div>
+                {workspaceAnalysis ? (
+                  <div className="panel" style={{ marginTop: "0.5rem", padding: "0.8rem" }}>
+                    <h4 style={{ marginBottom: 8 }}>Crunched comparison</h4>
+                    <p className="muted" style={{ marginBottom: 6 }}>
+                      Breweries: {workspaceAnalysis.brewery_count} | Suppliers: {workspaceAnalysis.supplier_count} | Category coverage:{" "}
+                      {(workspaceAnalysis.category_coverage_ratio * 100).toFixed(0)}%
+                    </p>
+                    <p className="muted" style={{ marginBottom: 6 }}>
+                      Best overall: <strong>{workspaceAnalysis.best_brewery_name || "N/A"}</strong>
+                    </p>
+                    <p className="muted">
+                      Ranking: {workspaceAnalysis.rankings.map((r, i) => `#${i + 1} ${r.brewery_name} (${r.combined_score.toFixed(1)})`).join(" | ")}
+                    </p>
+                  </div>
+                ) : null}
               </div>
             )}
-            {aiReport ? (
-              <div className="panel" style={{ marginTop: "0.5rem", padding: "0.8rem" }}>
-                <h4 style={{ marginBottom: 8 }}>AI Workspace Report</h4>
-                <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{aiReport}</pre>
-              </div>
-            ) : null}
           </div>
         )}
 

@@ -338,11 +338,33 @@ class WorkspaceDescriptionUpdateRequest(BaseModel):
 
 class WorkspaceAIReportRequest(BaseModel):
     model: Optional[str] = Field(default=None)
+    analysis: Optional[dict] = None
 
 
 class WorkspaceAIReportResponse(BaseModel):
     model: str
     report: str
+
+
+class WorkspaceBreweryAnalysisItem(BaseModel):
+    brewery_id: int
+    brewery_name: str
+    ops_score: float
+    sourcing_score: float
+    combined_score: float
+    estimated_extra_order_cost: float
+    estimated_extra_weekly_fixed_cost: float
+    supplier_coverage_ratio: float
+    avg_supplier_lead_time_days: float
+
+
+class WorkspaceAnalysisResponse(BaseModel):
+    brewery_count: int
+    supplier_count: int
+    category_coverage_ratio: float
+    best_brewery_id: Optional[int] = None
+    best_brewery_name: Optional[str] = None
+    rankings: List[WorkspaceBreweryAnalysisItem]
 
 
 # ── Breweries (multi-location map) ──────────────────────────────────────────
