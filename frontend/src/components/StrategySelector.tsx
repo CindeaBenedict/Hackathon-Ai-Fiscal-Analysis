@@ -196,6 +196,22 @@ function StrategySelector({
       </p>
 
       {/* ── AI Model picker ───────────────────────────────────────────── */}
+      {providerStatus && !providerStatus.ollama.available && (
+        <div className="ollama-notice" style={{
+          background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.22)",
+          borderRadius: "var(--r-sm)", padding: "10px 14px", marginBottom: 10,
+          display: "flex", gap: 10, alignItems: "flex-start",
+        }}>
+          <span style={{ fontSize: "1rem", lineHeight: 1, flexShrink: 0 }}>&#9888;</span>
+          <div style={{ fontSize: "0.78rem", color: "var(--text-2)", lineHeight: 1.5 }}>
+            <strong style={{ color: "#f59e0b" }}>Local AI (Ollama) is not available</strong>
+            <br />
+            Ollama models (Llama, Mistral) only work when running locally with Docker.
+            On hosted deployments (Heroku, etc.), use <strong>Claude</strong> or <strong>OpenAI</strong> —
+            add your API key in <strong>Settings</strong>.
+          </div>
+        </div>
+      )}
       <div style={{
         background: "var(--s1)", border: "1px solid var(--border)",
         borderRadius: "var(--r-md)", padding: "12px 14px", marginBottom: 14,
@@ -224,15 +240,22 @@ function StrategySelector({
 
           return (
             <div key={prov} style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, flexWrap: "wrap" }}>
                 <span style={{ fontSize: "0.68rem", color: "var(--text-2)", fontWeight: 600 }}>
                   {PROVIDER_LABELS[prov]}
                 </span>
+                {prov === "ollama" && !isAvailable && (
+                  <span style={{ fontSize: "0.62rem", color: "#f59e0b",
+                    background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.25)",
+                    borderRadius: 999, padding: "1px 7px" }}>
+                    Local only — requires Docker/Ollama on your machine
+                  </span>
+                )}
                 {prov !== "ollama" && !isAvailable && (
                   <span style={{ fontSize: "0.62rem", color: "#f59e0b",
                     background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.25)",
                     borderRadius: 999, padding: "1px 7px" }}>
-                    API key not set — see .env
+                    API key not set — add in Settings
                   </span>
                 )}
                 {prov === "ollama" && isPulling && (
@@ -265,12 +288,13 @@ function StrategySelector({
                         color: active ? colors.active : "var(--text-2)",
                         fontSize: "0.77rem",
                         fontWeight: active ? 700 : 500,
-                        padding: "5px 11px",
+                        padding: "6px 12px",
                         cursor: "pointer",
                         transition: "all 0.15s",
                         display: "flex",
                         alignItems: "center",
                         gap: 5,
+                        minHeight: 36,
                       }}
                     >
                       {p.label}
@@ -289,7 +313,7 @@ function StrategySelector({
         })}
 
         {/* Custom model input */}
-        <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input
             placeholder="Custom model name…"
             value={customModel}
@@ -300,7 +324,7 @@ function StrategySelector({
                 setCustomModel("");
               }
             }}
-            style={{ flex: 1, fontSize: "0.80rem" }}
+            style={{ flex: 1, fontSize: "0.80rem", minWidth: 120 }}
           />
           <button
             className="secondary-button"
