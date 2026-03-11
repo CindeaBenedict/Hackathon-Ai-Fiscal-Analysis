@@ -20,7 +20,7 @@ const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 const API_BASE_URL = rawApiBaseUrl.length > 0
   ? rawApiBaseUrl.replace(/\/+$/, "")
   : "/api";
-const DEFAULT_APP_DOWNLOAD_URL = "https://gitlab.com/next-level-challenge/team-28/-/releases";
+const DEFAULT_APP_DOWNLOAD_URL = "https://gitlab.com/next-level-challenge/team-28";
 const APP_DOWNLOAD_URL = (import.meta.env.VITE_APP_DOWNLOAD_URL ?? "").trim() || DEFAULT_APP_DOWNLOAD_URL;
 const COOKIE_SESSION_TOKEN = "__cookie_session__";
 
