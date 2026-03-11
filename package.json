@@ -2,7 +2,7 @@
   "name": "supply-chain-command-center",
   "private": true,
   "scripts": {
-    "build": "cd frontend && npm ci && npm run build"
+    "build": "cd frontend && npm install && VITE_API_BASE_URL= npm run build"
   },
   "engines": {
     "node": "20.x"
