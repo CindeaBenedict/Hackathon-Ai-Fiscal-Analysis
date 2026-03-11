@@ -8,10 +8,19 @@ export type SimulationResults = {
   profit_std_dev?: number;
   profit_p05?: number;
   profit_p10?: number;
+  profit_p25?: number;
   profit_p50?: number;
+  profit_p75?: number;
   profit_p90?: number;
   profit_p95?: number;
   profit_cvar95?: number;
+  profit_skewness?: number;
+  profit_kurtosis?: number;
+  sharpe_ratio?: number | null;
+  sortino_ratio?: number | null;
+  avg_max_drawdown?: number;
+  avg_service_level?: number;
+  avg_bankruptcy_week?: number | null;
   profit_ci_low?: number;
   profit_ci_high?: number;
   stockouts_average: number;
@@ -283,14 +292,38 @@ export default function AnalysisDashboard({ results: r, chatMessages, isAiLoadin
           {r.profit_p10 != null && (
             <StatRow label="P10 — bad case" value={$$(r.profit_p10)} color="#f87171" />
           )}
+          {r.profit_p25 != null && (
+            <StatRow label="P25 — lower quartile" value={$$(r.profit_p25)} color="#fbbf24" />
+          )}
           {r.profit_p50 != null && (
             <StatRow label="P50 — median" value={$$(r.profit_p50)} color="#93c5fd" />
+          )}
+          {r.profit_p75 != null && (
+            <StatRow label="P75 — upper quartile" value={$$(r.profit_p75)} color="#86efac" />
           )}
           {r.profit_p90 != null && (
             <StatRow label="P90 — good case" value={$$(r.profit_p90)} color="#22c55e" />
           )}
           {r.profit_p95 != null && (
             <StatRow label="P95 — best 5%" value={$$(r.profit_p95)} sub="upside" color="#22c55e" />
+          )}
+
+          <SectionLabel>Distribution shape</SectionLabel>
+          {r.profit_skewness != null && (
+            <StatRow
+              label="Skewness"
+              value={r.profit_skewness.toFixed(3)}
+              sub={r.profit_skewness < -0.5 ? "left-skewed (downside heavy)" : r.profit_skewness > 0.5 ? "right-skewed (upside potential)" : "roughly symmetric"}
+              color={r.profit_skewness < -0.5 ? "#ef4444" : r.profit_skewness > 0.5 ? "#22c55e" : "#93c5fd"}
+            />
+          )}
+          {r.profit_kurtosis != null && (
+            <StatRow
+              label="Excess kurtosis"
+              value={r.profit_kurtosis.toFixed(3)}
+              sub={r.profit_kurtosis > 1 ? "heavy tails (extreme events)" : r.profit_kurtosis < -1 ? "light tails" : "near-normal tails"}
+              color={r.profit_kurtosis > 1 ? "#f59e0b" : "#93c5fd"}
+            />
           )}
 
           <SectionLabel>Range</SectionLabel>
@@ -300,7 +333,39 @@ export default function AnalysisDashboard({ results: r, chatMessages, isAiLoadin
           <SectionLabel>Risk</SectionLabel>
           <StatRow label="Bankruptcy rate" value={pct(r.bankruptcy_probability)} color={bkColor} />
           <StatRow label="Bankrupt runs" value={`${r.bankruptcy_count} / ${n}`} color={bkColor} />
+          {r.avg_bankruptcy_week != null && (
+            <StatRow label="Avg bankruptcy week" value={`W${r.avg_bankruptcy_week.toFixed(1)}`} sub="when cash runs out" color="#ef4444" />
+          )}
           <StatRow label="Avg weekly stockouts" value={r.stockouts_average.toFixed(2)} />
+          {r.avg_service_level != null && (
+            <StatRow
+              label="Service level"
+              value={pct(r.avg_service_level)}
+              sub="weeks without stockout"
+              color={r.avg_service_level >= 0.9 ? "#22c55e" : r.avg_service_level >= 0.7 ? "#f59e0b" : "#ef4444"}
+            />
+          )}
+          {r.avg_max_drawdown != null && (
+            <StatRow label="Avg max drawdown" value={$$(r.avg_max_drawdown)} sub="peak-to-trough cash" color="#ef4444" />
+          )}
+
+          <SectionLabel>Risk-adjusted returns</SectionLabel>
+          {r.sharpe_ratio != null && (
+            <StatRow
+              label="Sharpe ratio"
+              value={r.sharpe_ratio.toFixed(3)}
+              sub="return per unit of risk"
+              color={r.sharpe_ratio > 0.5 ? "#22c55e" : r.sharpe_ratio > 0 ? "#fbbf24" : "#ef4444"}
+            />
+          )}
+          {r.sortino_ratio != null && isFinite(r.sortino_ratio) && (
+            <StatRow
+              label="Sortino ratio"
+              value={r.sortino_ratio.toFixed(3)}
+              sub="return per downside risk"
+              color={r.sortino_ratio > 0.5 ? "#22c55e" : r.sortino_ratio > 0 ? "#fbbf24" : "#ef4444"}
+            />
+          )}
           <BankruptcyBar probability={r.bankruptcy_probability} />
         </section>
 

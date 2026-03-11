@@ -46,10 +46,19 @@ class SimulationResponse(BaseModel):
     profit_std_dev: Optional[float] = None
     profit_p05: Optional[float] = None   # VaR 95%
     profit_p10: Optional[float] = None
+    profit_p25: Optional[float] = None
     profit_p50: Optional[float] = None
+    profit_p75: Optional[float] = None
     profit_p90: Optional[float] = None
     profit_p95: Optional[float] = None
     profit_cvar95: Optional[float] = None   # CVaR 95% (Expected Shortfall)
+    profit_skewness: Optional[float] = None
+    profit_kurtosis: Optional[float] = None
+    sharpe_ratio: Optional[float] = None
+    sortino_ratio: Optional[float] = None
+    avg_max_drawdown: Optional[float] = None
+    avg_service_level: Optional[float] = None
+    avg_bankruptcy_week: Optional[float] = None
     stockouts_average: float
     bankruptcy_probability: float
     bankruptcy_count: int

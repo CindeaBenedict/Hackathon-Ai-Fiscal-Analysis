@@ -12,6 +12,12 @@ Monte Carlo supply chain simulation — mathematical model.
 9. VaR 95%: 5th percentile of Π
 10. CVaR 95%: mean of worst 5% of outcomes
 11. Bankruptcy: P(bankrupt) = (1/N) Σ 1(Π^(i) < B)
+12. Sharpe ratio: (μ̂_Π) / σ̂  (risk-free = 0 for simplicity)
+13. Sortino ratio: μ̂_Π / σ_downside  (only negative deviations)
+14. Max drawdown: largest peak-to-trough in cumulative weekly cash
+15. Service level: fraction of weeks with zero stockouts
+16. Skewness: m3 / σ³  (asymmetry of profit distribution)
+17. Kurtosis: m4 / σ⁴ − 3  (excess kurtosis; tail heaviness)
 """
 import hashlib
 import random
@@ -119,7 +125,10 @@ def simulate_single_run(
     )
     order_quantity = float(_strategy_quantity(strategy, custom_quantity))
     inventory_trace: List[float] = [state.inventory]
+    cash_trace: List[float] = [state.cash]
+    weekly_stockout_flags: List[bool] = []
     bankrupt = False
+    bankruptcy_week: int | None = None
 
     for week in range(1, TOTAL_WEEKS + 1):
         # 1) Receive arriving orders
@@ -151,6 +160,9 @@ def simulate_single_run(
         if missing > 0:
             state.stockouts += 1
             state.cash -= missing * config.stockout_penalty
+            weekly_stockout_flags.append(True)
+        else:
+            weekly_stockout_flags.append(False)
 
         # 5) Holding cost on remaining inventory
         state.cash -= state.inventory * config.holding_cost
@@ -168,15 +180,35 @@ def simulate_single_run(
 
         if state.cash < config.bankruptcy_cash_threshold:
             bankrupt = True
+            if bankruptcy_week is None:
+                bankruptcy_week = week
 
         inventory_trace.append(state.inventory)
+        cash_trace.append(state.cash)
 
     profit = state.cash - config.initial_cash
+
+    # Max drawdown from cumulative cash trace
+    peak = cash_trace[0]
+    max_dd = 0.0
+    for c in cash_trace[1:]:
+        if c > peak:
+            peak = c
+        dd = peak - c
+        if dd > max_dd:
+            max_dd = dd
+
+    service_level = 1.0 - (sum(weekly_stockout_flags) / max(len(weekly_stockout_flags), 1))
+
     return {
         "profit": profit,
         "stockouts": state.stockouts,
         "inventory_trace": inventory_trace,
+        "cash_trace": cash_trace,
         "bankrupt": bankrupt,
+        "bankruptcy_week": bankruptcy_week,
+        "max_drawdown": max_dd,
+        "service_level": service_level,
     }
 
 
@@ -228,10 +260,10 @@ def run_monte_carlo_stable(
     simulations: int = 100,
     custom_quantity: int | None = None,
     config: SimulationConfig | None = None,
-    min_simulations: int = 400,
-    max_simulations: int = 6000,
-    target_profit_ci_half_width: float = 1200.0,
-    target_bankruptcy_ci_half_width: float = 0.02,
+    min_simulations: int = 500,
+    max_simulations: int = 10000,
+    target_profit_ci_half_width: float = 800.0,
+    target_bankruptcy_ci_half_width: float = 0.015,
 ) -> Dict:
     """
     Adaptive Monte Carlo loop:
@@ -289,10 +321,12 @@ def run_monte_carlo_stable(
     stockout_counts = [result["stockouts"] for result in run_results]
     inventory_traces = [result["inventory_trace"] for result in run_results]
     bankruptcies = sum(1 for result in run_results if result["bankrupt"])
+    bankruptcy_weeks = [r["bankruptcy_week"] for r in run_results if r["bankruptcy_week"] is not None]
+    max_drawdowns = [r["max_drawdown"] for r in run_results]
+    service_levels = [r["service_level"] for r in run_results]
 
     n = len(profits)
     mean_p = sum(profits) / n
-    # Sample standard deviation (N-1) for unbiased estimator
     if n >= 2:
         variance = sum((p - mean_p) ** 2 for p in profits) / (n - 1)
         std_p = math.sqrt(max(variance, 0.0))
@@ -300,24 +334,39 @@ def run_monte_carlo_stable(
         std_p = 0.0
     p_hat = bankruptcies / n
 
-    # CI 95%: mean ± 1.96 * σ̂ / √N
     se = std_p / math.sqrt(n) if n > 0 else 0.0
     profit_ci_half_width = 1.96 * se
 
-    # Sample a capped number of traces to keep response size manageable
     trace_sample = inventory_traces[:20] if len(inventory_traces) > 20 else inventory_traces
+
+    skew = _skewness(profits, mean_p, std_p)
+    kurt = _kurtosis(profits, mean_p, std_p)
+    sharpe = _sharpe_ratio(mean_p, std_p)
+    sortino = _sortino_ratio(mean_p, profits)
+    avg_max_dd = sum(max_drawdowns) / n if n > 0 else 0.0
+    avg_service_level = sum(service_levels) / n if n > 0 else 0.0
+    avg_bankruptcy_week = sum(bankruptcy_weeks) / len(bankruptcy_weeks) if bankruptcy_weeks else None
 
     return {
         "avg_profit": mean_p,
         "best_profit": max(profits),
         "worst_profit": min(profits),
         "profit_std_dev": std_p,
-        "profit_p05": _percentile(profits, 0.05),   # VaR 95%
+        "profit_p05": _percentile(profits, 0.05),
         "profit_p10": _percentile(profits, 0.10),
+        "profit_p25": _percentile(profits, 0.25),
         "profit_p50": _percentile(profits, 0.50),
+        "profit_p75": _percentile(profits, 0.75),
         "profit_p90": _percentile(profits, 0.90),
         "profit_p95": _percentile(profits, 0.95),
-        "profit_cvar95": _cvar95(profits),          # Expected Shortfall
+        "profit_cvar95": _cvar95(profits),
+        "profit_skewness": skew,
+        "profit_kurtosis": kurt,
+        "sharpe_ratio": sharpe,
+        "sortino_ratio": sortino,
+        "avg_max_drawdown": avg_max_dd,
+        "avg_service_level": avg_service_level,
+        "avg_bankruptcy_week": avg_bankruptcy_week,
         "stockouts_average": sum(stockout_counts) / n,
         "bankruptcy_probability": p_hat,
         "bankruptcy_count": bankruptcies,
@@ -356,6 +405,43 @@ def _cvar95(profits: List[float]) -> float:
     ordered = sorted(profits)
     k = max(1, math.ceil(0.05 * len(ordered)))
     return sum(ordered[:k]) / k
+
+
+def _skewness(values: List[float], mean: float, std: float) -> float:
+    """Sample skewness (Fisher). Positive = right tail, negative = left tail."""
+    n = len(values)
+    if n < 3 or std == 0:
+        return 0.0
+    m3 = sum((v - mean) ** 3 for v in values) / n
+    return m3 / (std ** 3)
+
+
+def _kurtosis(values: List[float], mean: float, std: float) -> float:
+    """Excess kurtosis (Fisher). >0 = heavy tails, <0 = light tails. Normal = 0."""
+    n = len(values)
+    if n < 4 or std == 0:
+        return 0.0
+    m4 = sum((v - mean) ** 4 for v in values) / n
+    return (m4 / (std ** 4)) - 3.0
+
+
+def _sharpe_ratio(mean: float, std: float) -> float | None:
+    """Sharpe ratio (risk-free = 0). None if std is 0."""
+    if std == 0:
+        return None
+    return mean / std
+
+
+def _sortino_ratio(mean: float, values: List[float]) -> float | None:
+    """Sortino ratio: mean / downside deviation (target = 0)."""
+    negatives = [v for v in values if v < 0]
+    if not negatives:
+        return None if mean == 0 else float("inf") if mean > 0 else float("-inf")
+    downside_var = sum(v ** 2 for v in negatives) / len(values)
+    downside_std = math.sqrt(max(downside_var, 0.0))
+    if downside_std == 0:
+        return None
+    return mean / downside_std
 
 
 def _mean_trace(traces: List[List[float]]) -> List[float]:
