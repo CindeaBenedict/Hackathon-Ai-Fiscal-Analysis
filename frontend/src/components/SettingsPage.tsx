@@ -10,9 +10,10 @@ type AIKeysResponse = {
 type SettingsPageProps = {
   authToken: string | null;
   apiBaseUrl: string;
+  onAuthError?: () => void;
 };
 
-export default function SettingsPage({ authToken, apiBaseUrl }: SettingsPageProps) {
+export default function SettingsPage({ authToken, apiBaseUrl, onAuthError }: SettingsPageProps) {
   const [keys, setKeys] = useState<AIKeysResponse | null>(null);
   const [anthropicInput, setAnthropicInput] = useState("");
   const [openaiInput, setOpenaiInput] = useState("");
@@ -55,6 +56,10 @@ export default function SettingsPage({ authToken, apiBaseUrl }: SettingsPageProp
         }),
       });
       if (!r.ok) {
+        if (r.status === 401 || r.status === 403) {
+          onAuthError?.();
+          throw new Error("Session expired — please wait while we reconnect…");
+        }
         const d = await r.json().catch(() => ({}));
         throw new Error(d.detail ?? "Failed to save");
       }

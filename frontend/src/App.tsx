@@ -670,7 +670,11 @@ function App() {
           ) : null}
 
           {activePage === "settings" ? (
-            <SettingsPage authToken={authToken} apiBaseUrl={API_BASE_URL} />
+            <SettingsPage authToken={authToken} apiBaseUrl={API_BASE_URL} onAuthError={() => {
+              localStorage.removeItem("auth_token");
+              localStorage.removeItem("auth_user");
+              setAuthToken(null);
+            }} />
           ) : null}
         </div>
       </section>
