@@ -19,6 +19,7 @@ const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 const API_BASE_URL = rawApiBaseUrl.length > 0
   ? rawApiBaseUrl.replace(/\/+$/, "")
   : "/api";
+const APP_DOWNLOAD_URL = (import.meta.env.VITE_APP_DOWNLOAD_URL ?? "").trim();
 
 function uid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -208,6 +209,13 @@ function App() {
     }
     return true;
   }, [customOrderQuantity, simulations, strategy]);
+
+  const isWebInterface = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    const ua = window.navigator.userAgent || "";
+    const isNativeWrapper = /Electron|Capacitor|Cordova|ReactNative|wv/i.test(ua);
+    return !isNativeWrapper;
+  }, []);
 
   function pushLog(entry: Omit<FrontendLogEntry, "id" | "timestamp">) {
     setLogs((prev) => [
@@ -1080,6 +1088,20 @@ function App() {
           </div>
           <div className="topbar-right">
             <span className="user-chip">@{username || "guest"}</span>
+            {isWebInterface ? (
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  if (!APP_DOWNLOAD_URL) {
+                    setError("Download URL is not configured. Set VITE_APP_DOWNLOAD_URL.");
+                    return;
+                  }
+                  window.open(APP_DOWNLOAD_URL, "_blank", "noopener,noreferrer");
+                }}
+              >
+                Download App
+              </button>
+            ) : null}
             <button className="secondary-button" onClick={() => setDarkMode((v) => !v)}>
               {darkMode ? "Light" : "Dark"}
             </button>
