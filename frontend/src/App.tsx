@@ -50,6 +50,7 @@ function App() {
   );
   const [username, setUsername] = useState<string>(localStorage.getItem("auth_user") || "");
   const [authBootstrapLoading, setAuthBootstrapLoading] = useState(false);
+  const [bootstrapRetry, setBootstrapRetry] = useState(0);
   const bootstrapStarted = useRef(false);
   const simulationAbortRef = useRef<AbortController | null>(null);
   const railItems: Array<{
@@ -468,10 +469,19 @@ function App() {
     if (authToken || bootstrapStarted.current) return;
     bootstrapStarted.current = true;
 
+    const BOOTSTRAP_TIMEOUT_MS = 15000;
+
     async function initGuest() {
       setAuthBootstrapLoading(true);
+      setError("");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), BOOTSTRAP_TIMEOUT_MS);
       try {
-        const res = await fetch(`${API_BASE_URL}/auth/guest`, { method: "POST" });
+        const res = await fetch(`${API_BASE_URL}/auth/guest`, {
+          method: "POST",
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
         if (!res.ok) throw new Error(await res.text());
         const data = (await res.json()) as AuthResponse;
         setAuthToken(data.token);
@@ -479,14 +489,21 @@ function App() {
         localStorage.setItem("auth_token", data.token);
         localStorage.setItem("auth_user", data.username);
       } catch (err) {
+        clearTimeout(timeoutId);
         bootstrapStarted.current = false; // allow retry on error
-        setError(err instanceof Error ? err.message : "Failed to start session.");
+        const message =
+          err instanceof Error && err.name === "AbortError"
+            ? "Backend did not respond in time. Check that the API URL is correct and CORS allows this origin."
+            : err instanceof Error
+              ? err.message
+              : "Failed to start session.";
+        setError(message);
       } finally {
         setAuthBootstrapLoading(false);
       }
     }
     void initGuest();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bootstrapRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!authToken) {
@@ -508,9 +525,27 @@ function App() {
               </svg>
             </div>
             <h2>Supply Chain Command</h2>
-            <p>Initializing your workspace&hellip;</p>
-            <div className="spinner" />
-            {error ? <p className="error">{error}</p> : null}
+            {error ? (
+              <>
+                <p className="error" style={{ marginTop: 8, marginBottom: 12 }}>{error}</p>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => {
+                    bootstrapStarted.current = false;
+                    setError("");
+                    setBootstrapRetry((r) => r + 1);
+                  }}
+                >
+                  Retry
+                </button>
+              </>
+            ) : (
+              <>
+                <p>Initializing your workspace&hellip;</p>
+                <div className="spinner" />
+              </>
+            )}
           </div>
         </div>
       </div>

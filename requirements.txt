@@ -1,0 +1,7 @@
+# Heroku: dependencies for backend (same as backend/requirements.txt + gunicorn)
+fastapi
+uvicorn
+pydantic
+python-multipart
+openpyxl
+gunicorn
