@@ -25,7 +25,6 @@ const DEFAULT_APP_DOWNLOAD_URL = "https://gitlab.com/next-level-challenge/team-2
 const APP_DOWNLOAD_URL = (import.meta.env.VITE_APP_DOWNLOAD_URL ?? "").trim() || DEFAULT_APP_DOWNLOAD_URL;
 const COOKIE_SESSION_TOKEN = "__cookie_session__";
 const LOCAL_STATE_KEY_PREFIX = "supply_chain_local_state_v1";
-const DEMO_SEEDED_KEY_PREFIX = "supply_chain_demo_seeded_v1";
 const ACTIVE_PAGE_STORAGE_KEY = "supply_chain_active_page_v1";
 const MATRIX_AUDIO_SOURCES = [
   "/matrix-theme.mp3",
@@ -373,6 +372,21 @@ function App() {
       }
       return res;
     });
+  }
+
+  async function refreshBreweriesAndSuppliers() {
+    const [breweriesRes, suppliersRes] = await Promise.all([
+      authFetch(`${API_BASE_URL}/breweries`),
+      authFetch(`${API_BASE_URL}/suppliers`),
+    ]);
+    if (breweriesRes.ok) {
+      const b = (await breweriesRes.json()) as Brewery[];
+      setBreweries(b);
+    }
+    if (suppliersRes.ok) {
+      const s = (await suppliersRes.json()) as Supplier[];
+      setSuppliers(s);
+    }
   }
 
   function setSession(data: AuthResponse) {
@@ -1046,28 +1060,13 @@ function App() {
     if (!authToken || !username) return;
     if (demoBootstrapStarted.current) return;
     if (breweries.length > 0 || suppliers.length > 0) return;
-    const seededKey = `${DEMO_SEEDED_KEY_PREFIX}:${username}`;
-    if (localStorage.getItem(seededKey) === "1") return;
     demoBootstrapStarted.current = true;
     authFetch(`${API_BASE_URL}/demo/bootstrap-sample-data`, { method: "POST" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then(async (data) => {
-        if (!data || !(data as { seeded?: boolean }).seeded) return;
-        const [breweriesRes, suppliersRes] = await Promise.all([
-          authFetch(`${API_BASE_URL}/breweries`),
-          authFetch(`${API_BASE_URL}/suppliers`),
-        ]);
-        if (breweriesRes.ok) {
-          const b = (await breweriesRes.json()) as Brewery[];
-          setBreweries(b);
-        }
-        if (suppliersRes.ok) {
-          const s = (await suppliersRes.json()) as Supplier[];
-          setSuppliers(s);
-        }
+      .then(async (r) => {
+        if (!r.ok) return;
+        await refreshBreweriesAndSuppliers();
       })
       .finally(() => {
-        localStorage.setItem(seededKey, "1");
         demoBootstrapStarted.current = false;
       });
   }, [authToken, username, breweries.length, suppliers.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1604,6 +1603,7 @@ function App() {
               suppliers={suppliers}
               currentBrewery={currentBrewery}
               onSaveWorkspaceState={(config, resultsData) => saveWorkspaceState(config, resultsData)}
+              onExamplesRestored={() => void refreshBreweriesAndSuppliers()}
             />
           ) : null}
 

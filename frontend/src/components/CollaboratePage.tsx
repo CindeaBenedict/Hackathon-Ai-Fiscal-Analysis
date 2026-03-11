@@ -55,6 +55,7 @@ type CollaboratePageProps = {
   suppliers: Supplier[];
   currentBrewery: Brewery | null;
   onSaveWorkspaceState?: (config: Record<string, unknown>, results: Record<string, unknown> | null) => void;
+  onExamplesRestored?: () => void;
 };
 
 const STORAGE_KEY = "supply_chain_current_workspace_id";
@@ -70,6 +71,7 @@ export default function CollaboratePage({
   suppliers,
   currentBrewery,
   onSaveWorkspaceState,
+  onExamplesRestored,
 }: CollaboratePageProps) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
@@ -503,6 +505,7 @@ export default function CollaboratePage({
         throw new Error((d as { detail?: string }).detail ?? "Could not add example data.");
       }
       const data = (await r.json()) as { breweries_created?: number; suppliers_created?: number };
+      onExamplesRestored?.();
       setMessage({
         type: "ok",
         text: `Example data added: ${data.breweries_created ?? 0} breweries, ${data.suppliers_created ?? 0} suppliers.`,
