@@ -21,6 +21,7 @@ const API_BASE_URL = rawApiBaseUrl.length > 0
   : "/api";
 const DEFAULT_APP_DOWNLOAD_URL = "https://gitlab.com/next-level-challenge/team-28/-/releases";
 const APP_DOWNLOAD_URL = (import.meta.env.VITE_APP_DOWNLOAD_URL ?? "").trim() || DEFAULT_APP_DOWNLOAD_URL;
+const COOKIE_SESSION_TOKEN = "__cookie_session__";
 
 function uid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -231,10 +232,10 @@ function App() {
 
   function authFetch(url: string, init?: RequestInit) {
     const headers = new Headers(init?.headers || {});
-    if (authToken) {
+    if (authToken && authToken !== COOKIE_SESSION_TOKEN) {
       headers.set("Authorization", `Bearer ${authToken}`);
     }
-    return fetch(url, { ...init, headers }).then((res) => {
+    return fetch(url, { ...init, headers, credentials: "include" }).then((res) => {
       if (res.status === 401 || res.status === 403) {
         localStorage.removeItem("auth_token");
         localStorage.removeItem("auth_user");
@@ -265,11 +266,15 @@ function App() {
   async function signOut() {
     const token = authToken;
     clearSessionLocal();
-    if (!token) return;
+    const headers: Record<string, string> = {};
+    if (token && token !== COOKIE_SESSION_TOKEN) {
+      headers.Authorization = `Bearer ${token}`;
+    }
     try {
       await fetch(`${API_BASE_URL}/auth/logout`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers,
+        credentials: "include",
       });
     } catch {
       // already signed out locally
@@ -306,6 +311,7 @@ function App() {
       const response = await fetch(`${API_BASE_URL}/auth/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           username: authUsernameInput.trim(),
           ...(authMode === "register" ? { email: authEmailInput.trim() } : {}),
@@ -804,6 +810,26 @@ function App() {
       setIsTheoryLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (authToken) return;
+    if (bootstrapStarted.current) return;
+    bootstrapStarted.current = true;
+    fetch(`${API_BASE_URL}/auth/me`, { credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return (await res.json()) as { username?: string };
+      })
+      .then((data) => {
+        if (!data?.username) return;
+        setAuthToken(COOKIE_SESSION_TOKEN);
+        setUsername(data.username);
+        localStorage.setItem("auth_user", data.username);
+      })
+      .finally(() => {
+        bootstrapStarted.current = false;
+      });
+  }, [authToken]);
 
   useEffect(() => {
     if (!authToken) {

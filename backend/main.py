@@ -10,9 +10,9 @@ import time
 from statistics import NormalDist, pstdev
 import uuid
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, APIRouter
+from fastapi import APIRouter, Cookie, Depends, FastAPI, File, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ai_agent import (
@@ -25,6 +25,7 @@ from ai_agent import (
     pull_model,
 )
 from auth import (
+    SESSION_TTL_HOURS,
     create_password_reset,
     get_api_key,
     init_auth_db,
@@ -121,10 +122,20 @@ AI_LOGS: list[AILogEntry] = []
 MAX_AI_LOGS = 200
 DATA_FILES: list[DataFileSummary] = []
 RAW_DATA_BY_FILE: dict[str, list[dict]] = {}
+CORS_ALLOW_ORIGINS = os.getenv(
+    "CORS_ALLOW_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
+)
+ALLOWED_ORIGINS = [origin.strip() for origin in CORS_ALLOW_ORIGINS.split(",") if origin.strip()]
+AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "session_token")
+AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes"}
+AUTH_COOKIE_SAMESITE = (os.getenv("AUTH_COOKIE_SAMESITE", "lax") or "lax").strip().lower()
+if AUTH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    AUTH_COOKIE_SAMESITE = "lax"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -187,21 +198,53 @@ def _mask_key(key: str | None) -> str:
     return key[:4] + "…" + key[-4:] if len(key) > 8 else "****"
 
 
-def require_auth(authorization: str | None = Header(default=None)) -> str:
-    if not authorization or not authorization.startswith("Bearer "):
+def _extract_session_token(authorization: str | None, cookie_token: str | None) -> str | None:
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        if token:
+            return token
+    if cookie_token:
+        return cookie_token.strip() or None
+    return None
+
+
+def _set_auth_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite=AUTH_COOKIE_SAMESITE,
+        max_age=SESSION_TTL_HOURS * 3600,
+        path="/",
+    )
+
+
+def _clear_auth_cookie(response: Response) -> None:
+    response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+
+
+def require_auth(
+    authorization: str | None = Header(default=None),
+    session_token: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
+) -> str:
+    token = _extract_session_token(authorization, session_token)
+    if not token:
         raise HTTPException(status_code=401, detail="Missing or invalid token.")
-    token = authorization.split(" ", 1)[1].strip()
     username = validate_token(token)
     if username is None:
         raise HTTPException(status_code=401, detail="Invalid token.")
     return username
 
 
-def require_auth_user(authorization: str | None = Header(default=None)) -> tuple[int, str]:
+def require_auth_user(
+    authorization: str | None = Header(default=None),
+    session_token: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
+) -> tuple[int, str]:
     """Like require_auth but returns (user_id, username) for workspace APIs."""
-    if not authorization or not authorization.startswith("Bearer "):
+    token = _extract_session_token(authorization, session_token)
+    if not token:
         raise HTTPException(status_code=401, detail="Missing or invalid token.")
-    token = authorization.split(" ", 1)[1].strip()
     user_id, username = get_user_from_token(token)
     if user_id is None or username is None:
         raise HTTPException(status_code=401, detail="Invalid token.")
@@ -1289,7 +1332,7 @@ Keep concise and practical."""
 
 
 @api.post("/auth/register", response_model=AuthResponse)
-def auth_register(payload: AuthRegisterRequest) -> AuthResponse:
+def auth_register(payload: AuthRegisterRequest, response: Response) -> AuthResponse:
     try:
         register_user(payload.username, payload.password, payload.email)
     except ValueError as exc:
@@ -1299,15 +1342,23 @@ def auth_register(payload: AuthRegisterRequest) -> AuthResponse:
     token = login_user(payload.username, payload.password)
     if token is None:
         raise HTTPException(status_code=500, detail="Registration failed.")
+    _set_auth_cookie(response, token)
     return AuthResponse(token=token, username=payload.username)
 
 
 @api.post("/auth/login", response_model=AuthResponse)
-def auth_login(payload: AuthLoginRequest) -> AuthResponse:
+def auth_login(payload: AuthLoginRequest, response: Response) -> AuthResponse:
     token = login_user(payload.username, payload.password)
     if token is None:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
+    _set_auth_cookie(response, token)
     return AuthResponse(token=token, username=payload.username)
+
+
+@api.get("/auth/me")
+def auth_me(auth: tuple[int, str] = Depends(require_auth_user)) -> dict:
+    user_id, username = auth
+    return {"user_id": user_id, "username": username}
 
 
 @api.post("/auth/forgot-password", response_model=AuthForgotPasswordResponse)
@@ -1338,16 +1389,21 @@ def auth_reset_password(payload: AuthResetPasswordRequest) -> dict:
 
 
 @api.post("/auth/logout")
-def auth_logout(authorization: str | None = Header(default=None)) -> dict:
-    if not authorization or not authorization.startswith("Bearer "):
+def auth_logout(
+    response: Response,
+    authorization: str | None = Header(default=None),
+    session_token: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
+) -> dict:
+    token = _extract_session_token(authorization, session_token)
+    if not token:
         raise HTTPException(status_code=401, detail="Missing or invalid token.")
-    token = authorization.split(" ", 1)[1].strip()
     logout_user(token)
+    _clear_auth_cookie(response)
     return {"ok": True}
 
 
 @api.post("/auth/guest", response_model=AuthResponse)
-def auth_guest() -> AuthResponse:
+def auth_guest(response: Response) -> AuthResponse:
     guest_username = f"guest_{secrets.token_hex(4)}"
     guest_password = "Guest-pass-1234!"
     try:
@@ -1359,6 +1415,7 @@ def auth_guest() -> AuthResponse:
     token = login_user(guest_username, guest_password)
     if token is None:
         raise HTTPException(status_code=500, detail="Could not create guest session.")
+    _set_auth_cookie(response, token)
     return AuthResponse(token=token, username=guest_username)
 
 

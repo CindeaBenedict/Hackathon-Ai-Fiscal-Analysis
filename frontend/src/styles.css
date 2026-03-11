@@ -144,8 +144,8 @@ body {
   align-items: center;
 }
 .topbar-logo {
-  width: 190px;
-  height: 46px;
+  width: 380px;
+  height: 92px;
   object-fit: contain;
 }
 .topbar-title { font-size: 0.92rem; font-weight: 700; letter-spacing: 0.01em; color: var(--text); }

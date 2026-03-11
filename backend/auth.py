@@ -10,6 +10,7 @@ import re
 DB_PATH = os.getenv("AUTH_DB_PATH", "auth.db")
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "24"))
 RESET_TOKEN_TTL_MINUTES = int(os.getenv("RESET_TOKEN_TTL_MINUTES", "30"))
+AUTH_SCHEMA_VERSION = 3
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -35,6 +36,25 @@ def _get_conn() -> sqlite3.Connection:
 
 def init_auth_db() -> None:
     with _get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_versions (
+                component TEXT PRIMARY KEY,
+                version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_version_history (
+                component TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                applied_at TEXT NOT NULL,
+                PRIMARY KEY(component, version)
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -97,6 +117,24 @@ def init_auth_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
             """
+        )
+        now = datetime.utcnow().isoformat()
+        conn.execute(
+            """
+            INSERT INTO schema_versions(component, version, updated_at)
+            VALUES ('auth', ?, ?)
+            ON CONFLICT(component) DO UPDATE SET
+                version = excluded.version,
+                updated_at = excluded.updated_at
+            """,
+            (AUTH_SCHEMA_VERSION, now),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO schema_version_history(component, version, applied_at)
+            VALUES ('auth', ?, ?)
+            """,
+            (AUTH_SCHEMA_VERSION, now),
         )
         conn.commit()
 

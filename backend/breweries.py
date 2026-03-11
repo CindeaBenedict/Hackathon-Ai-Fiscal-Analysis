@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime
 
 DB_PATH = os.getenv("AUTH_DB_PATH", "auth.db")
+BREWERIES_SCHEMA_VERSION = 2
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -20,6 +21,25 @@ def _get_conn() -> sqlite3.Connection:
 
 def init_breweries_db() -> None:
     with _get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_versions (
+                component TEXT PRIMARY KEY,
+                version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_version_history (
+                component TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                applied_at TEXT NOT NULL,
+                PRIMARY KEY(component, version)
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS breweries (
@@ -55,6 +75,24 @@ def init_breweries_db() -> None:
             conn.execute("ALTER TABLE breweries ADD COLUMN popularity_score REAL NOT NULL DEFAULT 50")
         if "sustainability_score" not in columns:
             conn.execute("ALTER TABLE breweries ADD COLUMN sustainability_score REAL NOT NULL DEFAULT 50")
+        now = datetime.utcnow().isoformat()
+        conn.execute(
+            """
+            INSERT INTO schema_versions(component, version, updated_at)
+            VALUES ('breweries', ?, ?)
+            ON CONFLICT(component) DO UPDATE SET
+                version = excluded.version,
+                updated_at = excluded.updated_at
+            """,
+            (BREWERIES_SCHEMA_VERSION, now),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO schema_version_history(component, version, applied_at)
+            VALUES ('breweries', ?, ?)
+            """,
+            (BREWERIES_SCHEMA_VERSION, now),
+        )
         conn.commit()
 
 

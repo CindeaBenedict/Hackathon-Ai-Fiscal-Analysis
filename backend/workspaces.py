@@ -7,6 +7,7 @@ import string
 from datetime import datetime
 
 DB_PATH = os.getenv("AUTH_DB_PATH", "auth.db")
+WORKSPACES_SCHEMA_VERSION = 2
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -29,6 +30,25 @@ def _invite_code() -> str:
 
 def init_workspaces_db() -> None:
     with _get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_versions (
+                component TEXT PRIMARY KEY,
+                version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_version_history (
+                component TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                applied_at TEXT NOT NULL,
+                PRIMARY KEY(component, version)
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS workspaces (
@@ -72,6 +92,24 @@ def init_workspaces_db() -> None:
         }
         if "description" not in columns:
             conn.execute("ALTER TABLE workspaces ADD COLUMN description TEXT")
+        now = datetime.utcnow().isoformat()
+        conn.execute(
+            """
+            INSERT INTO schema_versions(component, version, updated_at)
+            VALUES ('workspaces', ?, ?)
+            ON CONFLICT(component) DO UPDATE SET
+                version = excluded.version,
+                updated_at = excluded.updated_at
+            """,
+            (WORKSPACES_SCHEMA_VERSION, now),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO schema_version_history(component, version, applied_at)
+            VALUES ('workspaces', ?, ?)
+            """,
+            (WORKSPACES_SCHEMA_VERSION, now),
+        )
         conn.commit()
 
 
