@@ -91,6 +91,8 @@ export default function CollaboratePage({
   const [aiReportLoading, setAiReportLoading] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [workspaceAnalysis, setWorkspaceAnalysis] = useState<WorkspaceAnalysis | null>(null);
+  const [descriptionDirty, setDescriptionDirty] = useState(false);
+  const [errorModal, setErrorModal] = useState<string | null>(null);
   const lastWorkspaceStateUpdatedAt = useRef<string | null>(null);
   const snapshotInputRef = useRef<HTMLInputElement | null>(null);
   const editorRef = useRef<HTMLDivElement | null>(null);
@@ -168,14 +170,15 @@ export default function CollaboratePage({
       if (currentWorkspace) {
         const fresh = data.find((w) => w.id === currentWorkspace.id);
         if (fresh) {
-          setEditDescription(fresh.description || "");
-          if (editorRef.current) editorRef.current.innerHTML = sanitizeHtml(fresh.description || "");
+          if (fresh.name !== currentWorkspace.name || fresh.description !== currentWorkspace.description) {
+            onCurrentWorkspaceChange(fresh);
+          }
         }
       }
     } catch {
       setWorkspaces([]);
     }
-  }, [apiBaseUrl, authFetch, currentWorkspace]);
+  }, [apiBaseUrl, authFetch, currentWorkspace, onCurrentWorkspaceChange]);
 
   const loadMembers = useCallback(async () => {
     if (!currentWorkspace) {
@@ -204,6 +207,7 @@ export default function CollaboratePage({
     if (!currentWorkspace) return;
     setEditDescription(currentWorkspace.description || "");
     setWorkspaceAnalysis(null);
+    setDescriptionDirty(false);
     if (editorRef.current) editorRef.current.innerHTML = sanitizeHtml(currentWorkspace.description || "");
     lastWorkspaceStateUpdatedAt.current = null;
     try {
@@ -330,6 +334,7 @@ export default function CollaboratePage({
       const updated = (await r.json()) as Workspace;
       setWorkspaces((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
       onCurrentWorkspaceChange(updated);
+      setDescriptionDirty(false);
       setMessage({ type: "ok", text: "Workspace description updated." });
     } catch (e) {
       setMessage({ type: "err", text: e instanceof Error ? e.message : "Could not update description" });
@@ -393,6 +398,7 @@ export default function CollaboratePage({
     document.execCommand(command, false, value);
     if (editorRef.current) {
       setEditDescription(sanitizeHtml(editorRef.current.innerHTML));
+      setDescriptionDirty(true);
     }
   };
 
@@ -401,6 +407,23 @@ export default function CollaboratePage({
     setAiReportLoading(true);
     setMessage(null);
     try {
+      const normalizedModel = (aiModel || "").toLowerCase();
+      const needsAnthropicKey = normalizedModel.includes("claude");
+      const needsOpenAiKey = normalizedModel.startsWith("gpt") || normalizedModel.startsWith("o1") || normalizedModel.startsWith("o3");
+      if (needsAnthropicKey || needsOpenAiKey) {
+        const keysRes = await authFetch(`${apiBaseUrl}/ai/keys`);
+        if (keysRes.ok) {
+          const keys = (await keysRes.json()) as { anthropic_set?: boolean; openai_set?: boolean };
+          if (needsAnthropicKey && !keys.anthropic_set) {
+            setErrorModal("Claude API key is not set. Add it in Settings before generating AI report.");
+            return;
+          }
+          if (needsOpenAiKey && !keys.openai_set) {
+            setErrorModal("OpenAI API key is not set. Add it in Settings before generating AI report.");
+            return;
+          }
+        }
+      }
       const r = await authFetch(`${apiBaseUrl}/ai/workspaces/${currentWorkspace.id}/report`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -408,14 +431,31 @@ export default function CollaboratePage({
       });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
-        throw new Error((d as { detail?: string }).detail ?? "Report failed");
+        const detail = (d as { detail?: string }).detail ?? "Report failed";
+        if (detail.toLowerCase().includes("api key") || detail.toLowerCase().includes("unavailable")) {
+          setErrorModal(detail);
+          return;
+        }
+        throw new Error(detail);
       }
       const data = (await r.json()) as { model: string; report: string };
       const safeText = String(data.report || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const reportHtml = `<h2>AI Workspace Report</h2><p>${safeText.replace(/\n/g, "<br/>")}</p>`;
       const merged = sanitizeHtml(`${editDescription ? `${editDescription}<br/><br/>` : ""}${reportHtml}`);
       setEditDescription(merged);
+      setDescriptionDirty(true);
       if (editorRef.current) editorRef.current.innerHTML = merged;
+      const saveRes = await authFetch(`${apiBaseUrl}/workspaces/${currentWorkspace.id}/description`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: merged }),
+      });
+      if (saveRes.ok) {
+        const updated = (await saveRes.json()) as Workspace;
+        setWorkspaces((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
+        onCurrentWorkspaceChange(updated);
+        setDescriptionDirty(false);
+      }
       setMessage({ type: "ok", text: "AI report generated and inserted into workspace notes." });
     } catch (e) {
       setMessage({ type: "err", text: e instanceof Error ? e.message : "Could not generate report." });
@@ -557,6 +597,28 @@ export default function CollaboratePage({
 
   return (
     <section className="collaborate-page">
+      {errorModal ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            zIndex: 60,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div className="panel" style={{ maxWidth: 520, width: "100%" }}>
+            <h3 style={{ marginBottom: 8 }}>AI Provider Error</h3>
+            <p className="muted" style={{ marginBottom: 12 }}>{errorModal}</p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="secondary-button" onClick={() => setErrorModal(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <h2>Collaborate</h2>
       <p className="muted" style={{ marginBottom: "1rem" }}>
         Share workspaces with your team, add context with descriptions, and export shared simulation state as CSV.
@@ -682,6 +744,7 @@ export default function CollaboratePage({
                   suppressContentEditableWarning
                   onInput={(e) => {
                     setEditDescription(sanitizeHtml((e.target as HTMLDivElement).innerHTML));
+                    setDescriptionDirty(true);
                   }}
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(editDescription) }}
                 />
@@ -695,7 +758,7 @@ export default function CollaboratePage({
                     {demoSeedLoading ? "Adding examples..." : "Add example data"}
                   </button>
                   <button type="button" className="secondary-button" onClick={saveDescription} disabled={loading}>
-                    Save description
+                    {descriptionDirty ? "Save description*" : "Save description"}
                   </button>
                   {onLoadWorkspaceState && (
                     <button type="button" className="secondary-button" onClick={handleLoadFromWorkspace}>
@@ -754,6 +817,50 @@ export default function CollaboratePage({
                     <p className="muted">
                       Ranking: {workspaceAnalysis.rankings.map((r, i) => `#${i + 1} ${r.brewery_name} (${r.combined_score.toFixed(1)})`).join(" | ")}
                     </p>
+                    <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                      <strong style={{ fontSize: "0.8rem" }}>Cost impact by brewery</strong>
+                      {workspaceAnalysis.rankings.map((r) => {
+                        const totalCost = r.estimated_extra_order_cost + r.estimated_extra_weekly_fixed_cost;
+                        const maxCost = Math.max(
+                          1,
+                          ...workspaceAnalysis.rankings.map((x) => x.estimated_extra_order_cost + x.estimated_extra_weekly_fixed_cost),
+                        );
+                        const width = Math.max(6, (totalCost / maxCost) * 100);
+                        return (
+                          <div key={r.brewery_id} style={{ display: "grid", gap: 4 }}>
+                            <div className="muted" style={{ fontSize: "0.74rem" }}>
+                              {r.brewery_name}: ${totalCost.toFixed(2)} extra (order+fixed)
+                            </div>
+                            <div style={{ height: 8, background: "rgba(255,255,255,0.08)", borderRadius: 999 }}>
+                              <div style={{ width: `${width}%`, height: "100%", borderRadius: 999, background: "rgba(239,68,68,0.75)" }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                      <strong style={{ fontSize: "0.8rem" }}>Supplier unit-cost graph</strong>
+                      {Array.from(new Set(workspaceSuppliers.map((s) => s.category))).map((cat) => {
+                        const items = workspaceSuppliers.filter((s) => s.category === cat);
+                        const avgUnit = items.reduce((acc, s) => acc + (s.unit_price || 0), 0) / Math.max(items.length, 1);
+                        const allAvg = Array.from(new Set(workspaceSuppliers.map((s) => s.category))).map((c) => {
+                          const i = workspaceSuppliers.filter((s) => s.category === c);
+                          return i.reduce((a, s) => a + (s.unit_price || 0), 0) / Math.max(i.length, 1);
+                        });
+                        const maxUnit = Math.max(0.01, ...allAvg);
+                        const width = Math.max(6, (avgUnit / maxUnit) * 100);
+                        return (
+                          <div key={cat} style={{ display: "grid", gap: 4 }}>
+                            <div className="muted" style={{ fontSize: "0.74rem", textTransform: "capitalize" }}>
+                              {cat}: ${avgUnit.toFixed(3)} avg unit
+                            </div>
+                            <div style={{ height: 8, background: "rgba(255,255,255,0.08)", borderRadius: 999 }}>
+                              <div style={{ width: `${width}%`, height: "100%", borderRadius: 999, background: "rgba(59,130,246,0.78)" }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 ) : null}
               </div>

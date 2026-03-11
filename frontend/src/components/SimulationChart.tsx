@@ -80,6 +80,17 @@ function buildHistogram(values: number[], bins = 22, binEdges?: { min: number; m
 
 export default function SimulationChart({ inventoryTraces, profits }: SimulationChartProps) {
   const traces = inventoryTraces.slice(0, 12);
+  const sampledProfits = profits.slice(0, traces.length);
+  let bestTraceIdx = -1;
+  let worstTraceIdx = -1;
+  if (sampledProfits.length > 0) {
+    bestTraceIdx = 0;
+    worstTraceIdx = 0;
+    for (let i = 1; i < sampledProfits.length; i++) {
+      if (sampledProfits[i] > sampledProfits[bestTraceIdx]) bestTraceIdx = i;
+      if (sampledProfits[i] < sampledProfits[worstTraceIdx]) worstTraceIdx = i;
+    }
+  }
   const weekLabels =
     traces.length > 0
       ? Array.from({ length: traces[0].length }, (_, i) => (i === 0 ? "Start" : `W${i}`))
@@ -91,13 +102,13 @@ export default function SimulationChart({ inventoryTraces, profits }: Simulation
       label: `Run ${i + 1}`,
       data: trace,
       borderColor:
-        i === 0
-          ? "rgba(59,130,246,0.65)"
-          : i === 1
-          ? "rgba(239,68,68,0.55)"
+        i === bestTraceIdx
+          ? "rgba(59,130,246,0.75)"
+          : i === worstTraceIdx
+          ? "rgba(239,68,68,0.75)"
           : "rgba(148,163,184,0.18)",
       backgroundColor: "transparent",
-      borderWidth: i < 2 ? 1.5 : 1,
+      borderWidth: i === bestTraceIdx || i === worstTraceIdx ? 1.6 : 1,
       pointRadius: 0,
       fill: false,
       tension: 0.3,
