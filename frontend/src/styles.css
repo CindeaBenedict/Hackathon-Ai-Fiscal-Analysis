@@ -36,22 +36,27 @@ body {
     linear-gradient(90deg, rgba(59,130,246,0.035) 1px, transparent 1px);
   background-size: 28px 28px;
   min-height: 100vh;
+  min-height: 100dvh;
   color: var(--text);
+  -webkit-text-size-adjust: 100%;
 }
 
 /* ─── App shell ───────────────────────────────────────────────────────────── */
 .app-shell {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 /* ─── Sidebar ─────────────────────────────────────────────────────────────── */
 .side-rail {
   width: 64px;
   min-height: 100vh;
+  min-height: 100dvh;
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--s0);
   border-right: 1px solid var(--border);
@@ -106,6 +111,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-height: 100dvh;
   min-width: 0;
 }
 
@@ -119,6 +125,7 @@ body {
   border-bottom: 1px solid var(--border);
   background: rgba(7,9,28,0.75);
   backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -480,6 +487,7 @@ select option { background: var(--s1); }
 /* ─── Splash / loading screen ─────────────────────────────────────────────── */
 .splash-screen {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -655,4 +663,15 @@ select option { background: var(--s1); }
   .status-pill { font-size: 0.6rem; padding: 2px 8px; }
   .splash-card { padding: 28px 18px; }
   .nav-tabs button { padding: 10px 10px 8px; font-size: 0.78rem; }
+}
+
+/* ─── iOS safe areas (notch / home indicator) ─────────────────────────────── */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .page-body { padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+  .topbar { padding-top: env(safe-area-inset-top); }
+}
+
+/* ─── iOS: prevent input zoom on focus (needs font >= 16px) ───────────────── */
+@supports (-webkit-touch-callout: none) {
+  input, select, textarea { font-size: max(1rem, 16px) !important; }
 }

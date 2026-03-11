@@ -14,6 +14,16 @@ type AuthResponse = {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
+function uid(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 const DEFAULT_ORDER_BY_STRATEGY: Record<Strategy, number> = {
   conservative: 120,
   balanced: 100,
@@ -119,7 +129,7 @@ function App() {
     setLogs((prev) => [
       {
         ...entry,
-        id: crypto.randomUUID(),
+        id: uid(),
         timestamp: new Date().toISOString(),
       },
       ...prev,
@@ -315,7 +325,7 @@ function App() {
   function fetchInitialAdvisorSummary(simData: SimulationResponse) {
     setSimChat([
       {
-        id: crypto.randomUUID(),
+        id: uid(),
         role: "assistant",
         content: "Analyzing results…",
       },
@@ -346,7 +356,7 @@ function App() {
       .then((body) => {
         setSimChat([
           {
-            id: crypto.randomUUID(),
+            id: uid(),
             role: "assistant",
             content: body.summary || "No summary generated.",
           },
@@ -355,7 +365,7 @@ function App() {
       .catch(() => {
         setSimChat([
           {
-            id: crypto.randomUUID(),
+            id: uid(),
             role: "assistant",
             content: "Initial analysis could not be loaded. You can ask a question below.",
           },
@@ -368,7 +378,7 @@ function App() {
     if (!activeResults) return;
 
     const userMsg: SimChatMessage = {
-      id: crypto.randomUUID(),
+      id: uid(),
       role: "user",
       content: message,
     };
@@ -413,7 +423,7 @@ function App() {
         const text = await response.text();
         pushLog({ action: "ai.sim_chat.failed", request: { message }, error: text, level: "error" });
         const errMsg: SimChatMessage = {
-          id: crypto.randomUUID(),
+          id: uid(),
           role: "assistant",
           content: `Could not reach AI: ${text}`,
         };
@@ -423,7 +433,7 @@ function App() {
 
       const data = (await response.json()) as { model: string; answer: string };
       const aiMsg: SimChatMessage = {
-        id: crypto.randomUUID(),
+        id: uid(),
         role: "assistant",
         content: data.answer,
       };
@@ -431,7 +441,7 @@ function App() {
       pushLog({ action: "ai.sim_chat.success", request: { message }, response: data, level: "info" });
     } catch (err) {
       const errMsg: SimChatMessage = {
-        id: crypto.randomUUID(),
+        id: uid(),
         role: "assistant",
         content: `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
       };
